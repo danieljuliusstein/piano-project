@@ -13,6 +13,7 @@ import {
   Play,
   Upload,
 } from 'lucide-react'
+import { playPianoNote } from '../lib/piano-audio'
 
 type Screen = 'new' | 'upload' | 'feedback' | 'progress'
 type Song = 'elise' | 'joy'
@@ -122,6 +123,44 @@ function StepBar({ screen }: { screen: Screen }) {
 
 function Eyebrow({ children }: { children: React.ReactNode }) { return <div className="eyebrow">{children}</div> }
 
+const furEliseOpening = [
+  { note: 'E5', midi: 76, level: 4 },
+  { note: 'D♯5', midi: 75, level: 3, sharp: true },
+  { note: 'E5', midi: 76, level: 4 },
+  { note: 'D♯5', midi: 75, level: 3, sharp: true },
+  { note: 'E5', midi: 76, level: 4 },
+  { note: 'B4', midi: 71, level: 0 },
+  { note: 'D5', midi: 74, level: 2 },
+  { note: 'C5', midi: 72, level: 1 },
+  { note: 'A4', midi: 69, level: -1 },
+]
+
+function FurEliseScale() {
+  const [activeNote, setActiveNote] = useState<number | null>(null)
+
+  const playNote = (midi: number, index: number) => {
+    playPianoNote(midi, 0, 0.65, 0.86)
+    setActiveNote(index)
+    window.setTimeout(() => setActiveNote((current) => current === index ? null : current), 650)
+  }
+
+  return <section className="elise-scale" aria-labelledby="elise-scale-title">
+    <div className="elise-scale-heading"><div><Eyebrow>HOW IT WORKS · NOTE MAP</Eyebrow><h2 id="elise-scale-title">Play the Für Elise opening</h2><p>Each note on the staff is mapped to its pitch. Click a note to hear it.</p></div><Music2 size={26} aria-hidden="true" /></div>
+    <div className="music-staff" role="group" aria-label="Playable opening notes from Für Elise">
+      {Array.from({ length: 5 }, (_, index) => <i className="staff-line" key={index} />)}
+      <span className="treble-clef" aria-hidden="true">𝄞</span>
+      {furEliseOpening.map((note, index) => <button
+        key={`${note.note}-${index}`}
+        className={`staff-note ${activeNote === index ? 'playing' : ''}`}
+        style={{ left: `${17 + index * 9.5}%`, bottom: `${37 + note.level * 7}%` }}
+        onClick={() => playNote(note.midi, index)}
+        aria-label={`Play ${note.note.replace('♯', ' sharp')}`}
+      >{note.sharp && <b>♯</b>}<span /><i /><small>{note.note}</small></button>)}
+    </div>
+    <p className="scale-help">Opening phrase: E5 · D♯5 · E5 · D♯5 · E5 · B4 · D5 · C5 · A4</p>
+  </section>
+}
+
 function UploadScreen({ song, fileName, onFileChange, onBack, onEvaluate }: { song: typeof songs.elise; fileName: string; onFileChange: (value: string) => void; onBack: () => void; onEvaluate: () => void }) {
   const [mode, setMode] = useState<'upload' | 'record'>('upload')
   const [playing, setPlaying] = useState(false)
@@ -149,6 +188,7 @@ function FeedbackScreen({ onNew }: { onNew: () => void }) {
   const recommendations = [['Restore the 3 missed notes', 'Rehearse the highlighted gaps on the score slowly, hands separately. The dashed circles mark where expected notes were not played—focus on landing each one cleanly before increasing tempo.', 'Note accuracy'], ['Keep a steady tempo', 'Your average is 70 BPM against the 72 BPM reference, and the tempo graph shows you slow toward the end. Start practice at 60 BPM with a metronome, then build back toward 72 BPM once the notes feel secure.', 'Tempo'], ['Tighten note timing', 'Use the expected/played rhythm rolls in the Rhythm tab and count aloud while you play.', 'Rhythm']]
   return <main className="page-content feedback-page">
     <div className="feedback-heading"><div><Eyebrow>EVALUATION COMPLETE</Eyebrow><h1>Here's how you played.</h1><p className="lede">Für Elise · Opening section, bars 1–16 · fur-elise-practice.wav · 00:42</p></div><button className="secondary" onClick={onNew}>New evaluation</button></div>
+    <FurEliseScale />
     <div className="metric-grid">{[['89%', 'Note accuracy', '57 of 64 reference notes correct'], ['8', 'Note errors', '4 wrong · 3 missing · 1 extra'], ['70', 'Average tempo', 'BPM · Reference: 72 BPM'], ['85%', 'Rhythm accuracy', 'Note timing · illustrative score']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
     <section className="feedback-card">
       <div className="card-title"><div><h2>Review your performance</h2><p>{tab === 'rhythm' ? 'Compare expected note timing with your actual performance. Time moves left to right.' : tab === 'tempo' ? 'Switch tabs to see note accuracy, tempo, and rhythm detail.' : 'Switch tabs to see note accuracy, tempo, and rhythm detail.'}</p></div><div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div>
