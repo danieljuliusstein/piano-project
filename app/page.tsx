@@ -14,6 +14,14 @@ import {
   Upload,
 } from 'lucide-react'
 import { playPianoNote } from '../lib/piano-audio'
+import { analyzeTiming, type AnalysisResult } from '@/lib/timing'
+import sampleJson from '@/lib/fixtures/fur-elise-both-hands.sample.json'
+import { TempoChart } from '@/components/tempo-chart'
+import { RhythmChart } from '@/components/rhythm-chart'
+
+// Until uploads are connected, feedback is shown for one real algorithm result.
+const sample = sampleJson as AnalysisResult
+const timing = analyzeTiming(sample.events)
 
 type Screen = 'new' | 'upload' | 'feedback' | 'progress'
 type Song = 'elise' | 'joy'
@@ -189,11 +197,11 @@ function FeedbackScreen({ onNew }: { onNew: () => void }) {
   return <main className="page-content feedback-page">
     <div className="feedback-heading"><div><Eyebrow>EVALUATION COMPLETE</Eyebrow><h1>Here's how you played.</h1><p className="lede">Für Elise · Opening section, bars 1–16 · fur-elise-practice.wav · 00:42</p></div><button className="secondary" onClick={onNew}>New evaluation</button></div>
     <FurEliseScale />
-    <div className="metric-grid">{[['89%', 'Note accuracy', '57 of 64 reference notes correct'], ['8', 'Note errors', '4 wrong · 3 missing · 1 extra'], ['70', 'Average tempo', 'BPM · Reference: 72 BPM'], ['85%', 'Rhythm accuracy', 'Note timing · illustrative score']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
+    <div className="metric-grid">{[['89%', 'Note accuracy', '57 of 64 reference notes correct'], ['8', 'Note errors', '4 wrong · 3 missing · 1 extra'], [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'], [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
     <section className="feedback-card">
       <div className="card-title"><div><h2>Review your performance</h2><p>{tab === 'rhythm' ? 'Compare expected note timing with your actual performance. Time moves left to right.' : tab === 'tempo' ? 'Switch tabs to see note accuracy, tempo, and rhythm detail.' : 'Switch tabs to see note accuracy, tempo, and rhythm detail.'}</p></div><div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div>
-      {tab === 'tempo' && <TempoChart />}
-      {tab === 'rhythm' && <RhythmRoll />}
+      {tab === 'tempo' && <TempoChart timing={timing} />}
+      {tab === 'rhythm' && <RhythmChart events={sample.events} timing={timing} />}
       {tab === 'accuracy' && <AccuracyScore />}
       <div className="feedback-player"><small>fur-elise-practice.wav · Playback position is shared across all views</small><span>Switching tabs keeps your position</span><div><button className="play-button" onClick={() => setPlaying(!playing)}>{playing ? 'Ⅱ  Pause recording' : '▷  Play recording'}</button><span className="time">00:12</span><div className="player-line"><i /></div><span className="time">00:42</span></div></div>
     </section>
@@ -203,14 +211,6 @@ function FeedbackScreen({ onNew }: { onNew: () => void }) {
 
 function AccuracyScore() {
   return <><div className="feedback-legend"><span>◯ Wrong note (4)</span><span>◌ Missing note (3)</span><span>× Extra note (1)</span></div><div className="score-grid accuracy-view">{Array.from({ length: 32 }, (_, i) => <span key={i} style={{ left: `${3 + i * 3}%`, bottom: `${20 + ((i * 17) % 43)}%` }} />)}</div><div className="callout"><CircleHelp size={17} /> Missing note: E. Practise the dashed gap slowly, then add the surrounding notes.<span>1 of 3 missing</span></div></>
-}
-
-function TempoChart() {
-  return <><div className="chart-caption"><strong>Tempo over time</strong><span>Beats per minute</span></div><div className="chart-legend"><span className="tempo-line" /> Your tempo <span className="reference-line" /> Reference · 72 BPM</div><div className="tempo-chart"><span>84</span><span>72</span><span>60</span><svg viewBox="0 0 1000 220" preserveAspectRatio="none" aria-label="Illustrative tempo chart"><path d="M0 75 L45 70 L90 73 L135 80 L180 65 L225 70 L270 82 L315 80 L360 88 L405 83 L450 78 L495 85 L540 95 L585 82 L630 92 L675 104 L720 95 L765 86 L810 90 L855 101 L900 106 L945 99 L1000 111" /></svg><div className="chart-axis"><span>0:00</span><span>0:10</span><span>0:20</span><span>0:30</span><span>0:42</span></div></div><p className="chart-note">Your pace slows slightly in the last 10 seconds. Aim for an even 72 BPM.</p></>
-}
-
-function RhythmRoll() {
-  return <><div className="feedback-legend"><span className="legend-blue">■</span> On time <span className="legend-orange">■</span> Early / late (labeled below) <span className="legend-gray">■</span> Reference (expected) <em>Illustrative sample</em></div><div className="rhythm-roll"><strong>Beat → illustrative excerpt</strong><b>EXPECTED</b><div className="expected-row">{Array.from({ length: 16 }, (_, i) => <i key={i} />)}</div><b>ACTUALLY PLAYED</b><div className="played-row">{Array.from({ length: 16 }, (_, i) => <i className={i % 5 === 0 || i % 7 === 0 ? 'late' : ''} key={i} />)}</div><div className="timing-labels"><span>Early</span><span>Late</span><span>Early</span><span>Late</span></div></div><p className="chart-note">Compare note onsets and durations with the expected roll. Early / Late labels mark timing deviations; the Tempo tab shows changes in playing speed.</p></>
 }
 
 function ProgressScreen({ onBack }: { onBack: () => void }) {
