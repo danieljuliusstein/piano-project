@@ -1,16 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
-  ArrowRight,
   Check,
   ChevronRight,
   CircleHelp,
-  FileAudio,
   Info,
   Music2,
-  Play,
   Upload,
 } from 'lucide-react'
 import { playPianoNote } from '../lib/piano-audio'
@@ -18,10 +15,23 @@ import { analyzeTiming, type AnalysisResult } from '@/lib/timing'
 import sampleJson from '@/lib/fixtures/fur-elise-both-hands.sample.json'
 import { TempoChart } from '@/components/tempo-chart'
 import { RhythmChart } from '@/components/rhythm-chart'
+import { UploadScreen } from '@/components/cadence/upload-screen'
 
-// Until uploads are connected, feedback is shown for one real algorithm result.
 const sample = sampleJson as AnalysisResult
-const timing = analyzeTiming(sample.events)
+type Evaluation = AnalysisResult & {
+  reference_bpm: number
+  pitch: {
+    score: number
+    precision: number
+    recall: number
+    f1: number
+    correct: number
+    expected: number
+    missing: number
+    wrong: number
+    insertions: number
+  }
+}
 
 type Screen = 'new' | 'upload' | 'feedback' | 'progress'
 type Song = 'elise' | 'joy'
@@ -44,9 +54,38 @@ const songs = {
 export default function Page() {
   const [screen, setScreen] = useState<Screen>('new')
   const [song, setSong] = useState<Song>('elise')
-  const [fileName, setFileName] = useState('für-elise-practice.wav')
+  const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
+  const [evaluationError, setEvaluationError] = useState<string | null>(null)
+  const [evaluating, setEvaluating] = useState(false)
 
   const selectedSong = songs[song]
+  const fileName = audioFile?.name ?? 'für-elise-practice.wav'
+
+  const evaluate = async () => {
+    if (!audioFile) {
+      setEvaluationError('Choose an audio file before evaluating.')
+      return
+    }
+    setEvaluating(true)
+    setEvaluationError(null)
+    try {
+      const body = new FormData()
+      body.append('file', audioFile)
+      body.append('model', song === 'elise' ? 'fur_elise_with_harmony' : 'ode_to_joy_with_harmony')
+      const response = await fetch('/api/evaluate', { method: 'POST', body })
+      const payload = await response.json() as Evaluation | { error?: string }
+      if (!response.ok || !('pitch' in payload)) {
+        throw new Error('error' in payload && payload.error ? payload.error : 'Evaluation failed.')
+      }
+      setEvaluation(payload)
+      setScreen('feedback')
+    } catch (error) {
+      setEvaluationError(error instanceof Error ? error.message : 'Evaluation failed.')
+    } finally {
+      setEvaluating(false)
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -111,9 +150,17 @@ export default function Page() {
       )}
 
       {screen === 'upload' && (
-        <UploadScreen song={selectedSong} fileName={fileName} onFileChange={setFileName} onBack={() => setScreen('new')} onEvaluate={() => setScreen('feedback')} />
+        <UploadScreen
+          song={selectedSong}
+          file={audioFile}
+          onFileChange={setAudioFile}
+          onBack={() => setScreen('new')}
+          onEvaluate={evaluate}
+          evaluating={evaluating}
+          error={evaluationError}
+        />
       )}
-      {screen === 'feedback' && <FeedbackScreen onNew={() => setScreen('new')} />}
+      {screen === 'feedback' && <FeedbackScreen evaluation={evaluation} file={audioFile} fileName={fileName} song={selectedSong} onNew={() => setScreen('new')} />}
       {screen === 'progress' && <ProgressScreen onBack={() => setScreen('new')} />}
 
       <footer><span>Concept wireframe · Recording and evaluation are illustrative only.</span><span>Your practice, at your pace.</span></footer>
@@ -169,44 +216,66 @@ function FurEliseScale() {
   </section>
 }
 
-function UploadScreen({ song, fileName, onFileChange, onBack, onEvaluate }: { song: typeof songs.elise; fileName: string; onFileChange: (value: string) => void; onBack: () => void; onEvaluate: () => void }) {
-  const [mode, setMode] = useState<'upload' | 'record'>('upload')
-  const [playing, setPlaying] = useState(false)
-  return <main className="page-content upload-page">
-    <Eyebrow>UPLOAD A RECORDING</Eyebrow>
-    <h1>Your performance is ready to review.</h1>
-    <p className="lede">Check your audio, then submit it for note accuracy, tempo, and rhythm feedback.</p>
-    <div className="upload-layout">
-      <aside className="selected-song"><Eyebrow>SELECTED SONG</Eyebrow><h2>{song.title}</h2><p>{song.artist}</p><span className="outline-tag">{song.detail.split(' · ')[0]} · 16 bars</span><hr /><dl><dt>Difficulty</dt><dd>{song.level}</dd><dt>Reference tempo</dt><dd>72 BPM</dd><dt>Time signature</dt><dd>3/8</dd></dl><button className="text-button" onClick={onBack}>Change song</button></aside>
-      <section className="file-area">
-        <div className="tabs"><button className={`tab ${mode === 'upload' ? 'active' : ''}`} onClick={() => setMode('upload')}><Upload size={17} /> Upload a recording</button><button className={`tab ${mode === 'record' ? 'active' : ''}`} onClick={() => setMode('record')}><span>♟</span> Record in the app</button></div>
-        <div className="audio-card"><div className="file-row"><span className="file-icon"><FileAudio /></span><span><strong>{mode === 'record' ? 'New in-app recording' : fileName}</strong><small>{mode === 'record' ? 'Microphone ready · 00:42 max' : 'WAV · 8.4 MB · 00:42'}</small></span><span className="complete">{mode === 'record' ? 'Demo ready' : 'Upload complete'}</span><button className="icon-button" onClick={() => onFileChange('practice-take.wav')} aria-label="Replace file">×</button></div><hr /><strong>{mode === 'record' ? 'Record before submitting' : 'Listen before submitting'}</strong><div className="waveform">{Array.from({ length: 60 }, (_, i) => <i key={i} style={{ height: `${18 + ((i * 19) % 46)}px` }} />)}</div><button className="play-button" onClick={() => setPlaying(!playing)}><Play size={16} /> {playing ? 'Pause' : mode === 'record' ? 'Start recording' : 'Play'}</button><span className="time">00:00 / 00:42</span><button className="replace text-button" onClick={() => onFileChange('practice-take.wav')}>Replace file</button></div>
-        <label className="drop-zone" htmlFor="audio-file"><Upload size={18} /> Drop a different file here or browse files <small>MP3, WAV, M4A · Max. 25 MB</small><input id="audio-file" type="file" accept="audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFileChange(file.name) }} /></label>
-        <div className="actions"><button className="secondary" onClick={onBack}>Back to songs</button><button className="primary" onClick={onEvaluate}>Evaluate performance <ArrowRight size={17} /></button></div>
-        <p className="fine-print">We’ll compare this recording with {song.title}, bars 1–16. Analysis usually takes about 30 seconds.</p>
-      </section>
-    </div>
-  </main>
-}
-
-function FeedbackScreen({ onNew }: { onNew: () => void }) {
+function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluation: Evaluation | null; file: File | null; fileName: string; song: typeof songs.elise; onNew: () => void }) {
   const [tab, setTab] = useState<'accuracy' | 'tempo' | 'rhythm'>('accuracy')
   const [playing, setPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const result = evaluation ?? {
+    ...sample,
+    reference_bpm: 72,
+    pitch: { score: 89, precision: 0.89, recall: 0.89, f1: 0.89, correct: 57, expected: 64, missing: 3, wrong: 4, insertions: 1 },
+  }
+  const timing = analyzeTiming(result.events)
+  useEffect(() => {
+    if (!file || !audioRef.current) return
+    const audio = audioRef.current
+    const url = URL.createObjectURL(file)
+    audio.src = url
+    audio.load()
+    return () => {
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+      URL.revokeObjectURL(url)
+    }
+  }, [file])
+
+  const toggleRecording = async () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (audio.paused) {
+      try {
+        await audio.play()
+      } catch {
+        setPlaying(false)
+      }
+    } else {
+      audio.pause()
+    }
+  }
   const tabs = [['accuracy', 'Note accuracy'], ['tempo', 'Tempo'], ['rhythm', 'Rhythm']] as const
   const recommendations = [['Restore the 3 missed notes', 'Rehearse the highlighted gaps on the score slowly, hands separately. The dashed circles mark where expected notes were not played—focus on landing each one cleanly before increasing tempo.', 'Note accuracy'], ['Keep a steady tempo', 'Your average is 70 BPM against the 72 BPM reference, and the tempo graph shows you slow toward the end. Start practice at 60 BPM with a metronome, then build back toward 72 BPM once the notes feel secure.', 'Tempo'], ['Tighten note timing', 'Use the expected/played rhythm rolls in the Rhythm tab and count aloud while you play.', 'Rhythm']]
   return <main className="page-content feedback-page">
-    <div className="feedback-heading"><div><Eyebrow>EVALUATION COMPLETE</Eyebrow><h1>Here's how you played.</h1><p className="lede">Für Elise · Opening section, bars 1–16 · fur-elise-practice.wav · 00:42</p></div><button className="secondary" onClick={onNew}>New evaluation</button></div>
+    <div className="feedback-heading"><div><Eyebrow>EVALUATION COMPLETE</Eyebrow><h1>Here's how you played.</h1><p className="lede">{song.title} · {song.detail.split(' · ')[0]} · {fileName}</p></div><button className="secondary" onClick={onNew}>New evaluation</button></div>
     <FurEliseScale />
-    <div className="metric-grid">{[['89%', 'Note accuracy', '57 of 64 reference notes correct'], ['8', 'Note errors', '4 wrong · 3 missing · 1 extra'], [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'], [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
+    <div className="metric-grid">{[[`${result.pitch.score}%`, 'Note accuracy', `${result.pitch.correct} of ${result.pitch.expected} reference notes matched`], [`${result.pitch.missing + result.pitch.wrong + result.pitch.insertions}`, 'Note errors', `${result.pitch.wrong} wrong · ${result.pitch.missing} missing · ${result.pitch.insertions} extra`], [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'], [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
     <section className="feedback-card">
       <div className="card-title"><div><h2>Review your performance</h2><p>{tab === 'rhythm' ? 'Compare expected note timing with your actual performance. Time moves left to right.' : tab === 'tempo' ? 'Switch tabs to see note accuracy, tempo, and rhythm detail.' : 'Switch tabs to see note accuracy, tempo, and rhythm detail.'}</p></div><div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div>
       {tab === 'tempo' && <TempoChart timing={timing} />}
-      {tab === 'rhythm' && <RhythmChart events={sample.events} timing={timing} />}
+      {tab === 'rhythm' && <RhythmChart events={result.events} timing={timing} />}
       {tab === 'accuracy' && <AccuracyScore />}
-      <div className="feedback-player"><small>fur-elise-practice.wav · Playback position is shared across all views</small><span>Switching tabs keeps your position</span><div><button className="play-button" onClick={() => setPlaying(!playing)}>{playing ? 'Ⅱ  Pause recording' : '▷  Play recording'}</button><span className="time">00:12</span><div className="player-line"><i /></div><span className="time">00:42</span></div></div>
+      <div className="feedback-player"><small>{fileName} · Playback position is shared across all views</small><span>Switching tabs keeps your position</span><div><button className="play-button" onClick={toggleRecording} disabled={!file}>{playing ? 'Ⅱ  Pause recording' : '▷  Play recording'}</button><span className="time">{formatAudioTime(currentTime)}</span><div className="player-line"><i style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }} /></div><span className="time">{formatAudioTime(duration)}</span></div><audio ref={audioRef} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setCurrentTime(0) }} /></div>
     </section>
     <h2 className="work-title">Your top 3 things to work on</h2>{recommendations.map(([title, detail, tag], i) => <button className="work-item" key={title} onClick={() => setTab(tag === 'Tempo' ? 'tempo' : tag === 'Rhythm' ? 'rhythm' : 'accuracy')}><span className="rank">{i + 1}</span><div><h3>{title} <em>{tag}</em></h3><p>{detail}</p></div><ChevronRight /></button>)}<button className="record-button" onClick={onNew}>♩ &nbsp; Record another take</button>
   </main>
+}
+
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds)) return '00:00'
+  const wholeSeconds = Math.floor(seconds)
+  return `${String(Math.floor(wholeSeconds / 60)).padStart(2, '0')}:${String(wholeSeconds % 60).padStart(2, '0')}`
 }
 
 function AccuracyScore() {
