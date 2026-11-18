@@ -92,6 +92,9 @@ export type TimingPoint = {
   seconds: number
   expectedSeconds: number | null
   bpm: number | null
+  // True near the start or end of the take, where the tempo window has
+  // trusted notes on one side only, so bpm is an estimate.
+  edge: boolean
   deviation: number | null
   timing: 'early' | 'late' | 'on time' | null
 }
@@ -113,11 +116,14 @@ export function analyzeTiming(
       : deviation < -tolerance ? 'early'
       : deviation > tolerance ? 'late'
       : 'on time'
+    const before = events.slice(Math.max(0, i - window), i).filter(isTrusted).length
+    const after = events.slice(i + 1, i + window + 1).filter(isTrusted).length
     return {
       event: e.event,
       seconds: e.start_seconds,
       expectedSeconds: expectedStart(events, i, window)?.seconds ?? null,
       bpm: localBpm(events, i, window),
+      edge: before < window - 1 || after < window - 1,
       deviation,
       timing,
     }
@@ -131,4 +137,39 @@ export function analyzeTiming(
     rhythmScore: measured.length ? measured.filter((p) => p.timing === 'on time').length / measured.length : null,
     points,
   }
+}
+
+// 6. Describe the tempo for the summary sentence, using reliable (non-edge) points only.
+// A take counts as steady when every reliable point is within STEADY_RANGE of the average;
+// these thresholds are starting guesses to check against real recordings.
+const STEADY_RANGE = 0.08
+const DRIFT_PERCENT = 5
+
+export type TempoTrend = {
+  steady: boolean
+  // Percent change from the first third of the take to the last third; negative means slowing down.
+  drift: number | null
+  // The slowest reliable moment, when it is clearly below the average.
+  dip: { event: number; startBeat: number; seconds: number; bpm: number } | null
+}
+
+export function tempoTrend(events: AlgorithmEvent[], summary: TimingSummary): TempoTrend | null {
+  const reliable = summary.points.filter((p) => p.bpm !== null && !p.edge) as (TimingPoint & { bpm: number })[]
+  if (reliable.length < 3 || summary.averageBpm === null) return null
+  const average = summary.averageBpm
+
+  const third = Math.max(1, Math.floor(reliable.length / 3))
+  const mean = (points: { bpm: number }[]) => points.reduce((sum, p) => sum + p.bpm, 0) / points.length
+  const first = mean(reliable.slice(0, third))
+  const last = mean(reliable.slice(-third))
+  const drift = Math.round(((last - first) / first) * 100)
+
+  const steady = reliable.every((p) => Math.abs(p.bpm - average) / average <= STEADY_RANGE)
+  const slowest = reliable.reduce((a, b) => (b.bpm < a.bpm ? b : a))
+  const index = summary.points.indexOf(slowest)
+  const dip = (average - slowest.bpm) / average > STEADY_RANGE
+    ? { event: slowest.event, startBeat: events[index].start_beat, seconds: slowest.seconds, bpm: slowest.bpm }
+    : null
+
+  return { steady, drift: Math.abs(drift) >= DRIFT_PERCENT ? drift : null, dip }
 }

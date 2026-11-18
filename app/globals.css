@@ -1069,6 +1069,79 @@ button:not(:disabled) {
   margin-left:100px;
   font-size:11px;
 }
+.target-line {
+  width:20px;
+  border-top:2px dotted var(--ink);
+  margin-left:15px;
+}
+.rhythm-roll>b.rhythm-label {
+  position:relative;
+  z-index:1;
+  width:fit-content;
+  padding-right:6px;
+  background:#fff;
+}
+.rhythm-links {
+  position:absolute;
+  overflow:visible;
+  pointer-events:none;
+}
+.rhythm-links line {
+  stroke-width:1.5;
+  vector-effect:non-scaling-stroke;
+  transition:opacity .12s;
+}
+.rhythm-links .on-time {
+  stroke:var(--blue);
+}
+.rhythm-links .off-time {
+  stroke:#d98a45;
+  stroke-width:2;
+}
+.rhythm-links line.is-active {
+  stroke-width:3;
+}
+.rhythm-links .hit {
+  stroke:transparent;
+  stroke-width:12;
+  pointer-events:stroke;
+  cursor:pointer;
+}
+.played-row i {
+  cursor:pointer;
+}
+.expected-row i,.played-row i {
+  transition:opacity .12s;
+}
+.rhythm-roll.has-active .expected-row i:not(.is-active),
+.rhythm-roll.has-active .played-row i:not(.is-active),
+.rhythm-roll.has-active .rhythm-links line:not(.hit):not(.is-active) {
+  opacity:.3;
+}
+.expected-row i.is-active,.played-row i.is-active,.played-row i:focus-visible {
+  outline:2px solid var(--ink);
+  outline-offset:1px;
+}
+.rhythm-tooltip {
+  position:absolute;
+  z-index:2;
+  pointer-events:none;
+  padding:6px 9px;
+  border-radius:6px;
+  background:var(--ink);
+  color:#fff;
+  font-size:12px;
+  line-height:1.35;
+  white-space:nowrap;
+  box-shadow:0 4px 12px rgba(0,0,0,.15);
+}
+.rhythm-tooltip strong {
+  display:block;
+  font-weight:600;
+}
+.rhythm-tooltip span {
+  color:#cfd8e2;
+}
 .feedback-player {
   border:1px solid var(--line);
   border-radius:7px;
@@ -2188,6 +2261,10 @@ button:not(:disabled) {
   }
   .feedback-page .timing-labels {
     display:none;
+  }
+  .feedback-page .rhythm-tooltip {
+    font-size:11px;
+    padding:4px 7px;
   }
   .feedback-page .feedback-player {
     margin-top:5px;
