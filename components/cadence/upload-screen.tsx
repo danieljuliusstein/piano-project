@@ -8,6 +8,7 @@ type Song = {
   artist: string
   level: string
   detail: string
+  meter: string
 }
 
 export function UploadScreen({ song, file, onFileChange, onBack, onEvaluate, evaluating, error }: { song: Song; file: File | null; onFileChange: (value: File | null) => void; onBack: () => void; onEvaluate: () => void; evaluating: boolean; error: string | null }) {
@@ -102,12 +103,12 @@ export function UploadScreen({ song, file, onFileChange, onBack, onEvaluate, eva
         <div className="eyebrow">SELECTED SONG</div>
         <h2>{song.title}</h2>
         <p>{song.artist}</p>
-        <span className="outline-tag">{song.detail.split(' · ')[0]} · 16 bars</span>
+        <span className="outline-tag">{song.detail.split(' · ').slice(0, 2).join(' · ')}</span>
         <hr />
         <dl>
           <dt>Difficulty</dt><dd>{song.level}</dd>
-          <dt>Reference tempo</dt><dd>72 BPM</dd>
-          <dt>Time signature</dt><dd>3/8</dd>
+          <dt>Reference tempo</dt><dd>{song.detail.split(' · ')[2]}</dd>
+          <dt>Time signature</dt><dd>{song.meter}</dd>
         </dl>
         <button className="text-button" onClick={onBack}>Change song</button>
       </aside>
@@ -155,7 +156,7 @@ export function UploadScreen({ song, file, onFileChange, onBack, onEvaluate, eva
           <button className="secondary" onClick={onBack}>Back to songs</button>
           <button className="primary" onClick={onEvaluate} disabled={evaluating || !file}>{evaluating ? 'Evaluating…' : 'Evaluate performance'} {!evaluating && <ArrowRight size={17} />}</button>
         </div>
-        <p className="fine-print">We’ll compare this recording with {song.title}, bars 1–16. Analysis usually takes about 30 seconds.</p>
+        <p className="fine-print">We’ll compare this recording with the {song.detail.split(' · ').slice(0, 2).join(', ').toLowerCase()} of {song.title}. Analysis usually takes about 30 seconds.</p>
       </section>
     </div>
   </main>

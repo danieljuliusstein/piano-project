@@ -9,6 +9,7 @@ type SongInfo = {
   artist: string
   level: string
   detail: string
+  beatSymbol: string
 }
 
 type ChartCard = {
@@ -122,7 +123,7 @@ export function ProgressScreen({
     },
     {
       title: 'Tempo',
-      value: latest?.averageBpm ? `${latest.averageBpm} BPM` : '–',
+      value: latest?.averageBpm ? `${songs[song].beatSymbol} = ${latest.averageBpm}` : '–',
       points: chartTakes
         .map((record) => record.averageBpm)
         .filter((bpm): bpm is number => bpm !== null),

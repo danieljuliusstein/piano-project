@@ -36,18 +36,30 @@ type Evaluation = AnalysisResult & {
 type Screen = 'new' | 'upload' | 'feedback' | 'progress' | 'how'
 type Song = 'elise' | 'joy'
 
+// beatSymbol is the note the analyzer counts as one beat, so every tempo is shown
+// as that note per minute (♪ = 136 means 136 eighth notes a minute). beatsPerBar
+// and pickupBeats turn score beats into bar numbers; Für Elise opens with a
+// one-beat pickup before bar 1.
 const songs = {
   elise: {
     title: 'Für Elise',
     artist: 'Ludwig van Beethoven',
     level: 'Intermediate',
-    detail: 'Opening section · 16 bars · 72 BPM',
+    detail: 'Opening section · 7 bars · ♪ = 136',
+    meter: '3/8',
+    beatSymbol: '♪',
+    beatsPerBar: 3,
+    pickupBeats: 1,
   },
   joy: {
     title: 'Ode to Joy',
     artist: 'Ludwig van Beethoven',
     level: 'Beginner',
-    detail: 'Main theme · 16 bars · 90 BPM',
+    detail: 'Main theme · 8 bars · ♩ = 136',
+    meter: '4/4',
+    beatSymbol: '♩',
+    beatsPerBar: 4,
+    pickupBeats: 0,
   },
 }
 
@@ -216,7 +228,8 @@ function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluatio
   const audioRef = useRef<HTMLAudioElement>(null)
   const result = evaluation ?? {
     ...sample,
-    reference_bpm: 72,
+    // Same as REFERENCE_BPM in python/score_models.py, which uploaded results report.
+    reference_bpm: 60 / 0.44,
     pitch: { score: 89, precision: 0.89, recall: 0.89, f1: 0.89, correct: 57, expected: 64, missing: 3, wrong: 4, insertions: 1 },
   }
   const timing = analyzeTiming(result.events)
@@ -261,7 +274,7 @@ function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluatio
       {[
         [`${result.pitch.score}%`, 'Note accuracy', `${result.pitch.correct} of ${result.pitch.expected} reference notes matched`],
         [`${result.pitch.missing + result.pitch.wrong + result.pitch.insertions}`, 'Note errors', `${result.pitch.wrong} wrong · ${result.pitch.missing} missing · ${result.pitch.insertions} extra`],
-        [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'],
+        [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', `${song.beatSymbol} per minute · target ${Math.round(result.reference_bpm)}`],
         [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time'],
       ].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}
     </div>
@@ -272,7 +285,7 @@ function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluatio
         <div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
       </div>
       <div className="feedback-view">
-        {tab === 'tempo' && <TempoChart timing={timing} />}
+        {tab === 'tempo' && <TempoChart timing={timing} events={result.events} targetBpm={result.reference_bpm} song={song} />}
         {tab === 'rhythm' && <RhythmChart events={result.events} timing={timing} />}
         {tab === 'accuracy' && <AccuracySummary pitch={result.pitch} />}
         {tab === 'notes' && <NotesView events={result.events} pitch={result.pitch} />}
