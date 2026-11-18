@@ -2,24 +2,24 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
-  ArrowLeft,
   Check,
-  ChevronRight,
-  CircleHelp,
   Info,
   Music2,
   Upload,
 } from 'lucide-react'
-import { playPianoNote } from '../lib/piano-audio'
-import { analyzeTiming, type AnalysisResult } from '@/lib/timing'
+import { analyzeTiming, type AlgorithmEvent, type AnalysisResult } from '@/lib/timing'
 import sampleJson from '@/lib/fixtures/fur-elise-both-hands.sample.json'
 import { TempoChart } from '@/components/tempo-chart'
 import { RhythmChart } from '@/components/rhythm-chart'
 import { UploadScreen } from '@/components/cadence/upload-screen'
+import { ProgressScreen } from '@/components/progress-screen'
+import { midiNoteName } from '@/lib/performance'
+import { playPianoNote } from '@/lib/piano-audio'
 
 const sample = sampleJson as AnalysisResult
 type Evaluation = AnalysisResult & {
   reference_bpm: number
+  savedAt?: string
   pitch: {
     score: number
     precision: number
@@ -33,7 +33,7 @@ type Evaluation = AnalysisResult & {
   }
 }
 
-type Screen = 'new' | 'upload' | 'feedback' | 'progress'
+type Screen = 'new' | 'upload' | 'feedback' | 'progress' | 'how'
 type Song = 'elise' | 'joy'
 
 const songs = {
@@ -61,6 +61,10 @@ export default function Page() {
 
   const selectedSong = songs[song]
   const fileName = audioFile?.name ?? 'für-elise-practice.wav'
+
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [screen])
 
   const evaluate = async () => {
     if (!audioFile) {
@@ -95,17 +99,16 @@ export default function Page() {
           <span>Piano Review</span>
         </button>
         <nav className="top-nav">
-          <button className={screen === 'new' || screen === 'upload' ? 'active' : ''} onClick={() => setScreen('new')}>New evaluation</button>
+          <button className={screen === 'new' || screen === 'upload' || screen === 'feedback' ? 'active' : ''} onClick={() => setScreen('new')}>New evaluation</button>
           <button className={screen === 'progress' ? 'active' : ''} onClick={() => setScreen('progress')}>My progress</button>
-          <button onClick={() => setScreen('feedback')}>How it works</button>
-          <span className="wireframe">WIREFRAME</span>
+          <button className={screen === 'how' ? 'active' : ''} onClick={() => setScreen('how')}>How it works</button>
         </nav>
       </header>
 
-      {screen !== 'progress' && <StepBar screen={screen} />}
+      {(screen === 'new' || screen === 'upload' || screen === 'feedback') && <StepBar screen={screen} />}
 
       {screen === 'new' && (
-        <main className="page-content">
+        <main className="page-content new-page">
           <Eyebrow>NEW EVALUATION</Eyebrow>
           <h1>What would you like to play?</h1>
           <p className="lede">Choose a song, then add a recording. We’ll compare your performance with the reference score.</p>
@@ -130,22 +133,12 @@ export default function Page() {
             <div className="upload-prompt">
               <div className="prompt-heading"><Upload size={21} /><strong>Upload a recording</strong></div>
               <p>Already recorded your practice? Add an audio file from your device to get feedback.</p>
-              <button className="primary" onClick={() => setScreen('upload')}>Choose an audio file</button>
+              <button className="primary" onClick={() => setScreen('upload')}>Choose file</button>
               <span className="format-note">MP3, WAV or M4A</span>
             </div>
           </section>
 
-          <div className="info-note"><Info size={19} /> Your feedback covers note accuracy on the score, tempo as a graph, and rhythm as expected-versus-played piano rolls.</div>
-
-          <section className="form-section progress-promo">
-            <h2>3. Review your progress</h2>
-            <div className="upload-prompt">
-              <strong>Progress Tracker</strong>
-              <p>Track note accuracy, tempo, and rhythm across Für Elise and Ode to Joy, and revisit past recordings.</p>
-              <button className="primary" onClick={() => setScreen('progress')}>Progress Tracker</button>
-              <span className="format-note">Separate overview</span>
-            </div>
-          </section>
+          <div className="info-note"><Info size={19} /> Feedback covers note accuracy, tempo, and rhythm.</div>
         </main>
       )}
 
@@ -161,9 +154,10 @@ export default function Page() {
         />
       )}
       {screen === 'feedback' && <FeedbackScreen evaluation={evaluation} file={audioFile} fileName={fileName} song={selectedSong} onNew={() => setScreen('new')} />}
-      {screen === 'progress' && <ProgressScreen onBack={() => setScreen('new')} />}
+      {screen === 'progress' && <ProgressScreen song={song} songs={songs} onSongChange={setSong} onBack={() => setScreen('new')} />}
+      {screen === 'how' && <HowItWorksScreen onStart={() => setScreen('new')} />}
 
-      <footer><span>Concept wireframe · Recording and evaluation are illustrative only.</span><span>Your practice, at your pace.</span></footer>
+      <footer><span>Saved on this device.</span><span>Your practice, at your pace.</span></footer>
     </div>
   )
 }
@@ -178,46 +172,44 @@ function StepBar({ screen }: { screen: Screen }) {
 
 function Eyebrow({ children }: { children: React.ReactNode }) { return <div className="eyebrow">{children}</div> }
 
-const furEliseOpening = [
-  { note: 'E5', midi: 76, level: 4 },
-  { note: 'D♯5', midi: 75, level: 3, sharp: true },
-  { note: 'E5', midi: 76, level: 4 },
-  { note: 'D♯5', midi: 75, level: 3, sharp: true },
-  { note: 'E5', midi: 76, level: 4 },
-  { note: 'B4', midi: 71, level: 0 },
-  { note: 'D5', midi: 74, level: 2 },
-  { note: 'C5', midi: 72, level: 1 },
-  { note: 'A4', midi: 69, level: -1 },
+const howItWorks = [
+  {
+    number: '01',
+    title: 'Choose a piece',
+    body: 'Pick Für Elise or Ode to Joy and load its reference score.',
+  },
+  {
+    number: '02',
+    title: 'Add your take',
+    body: 'Upload an MP3, WAV, or M4A. Cadence aligns it to the score.',
+  },
+  {
+    number: '03',
+    title: 'Review and practise',
+    body: 'See note, tempo, and rhythm detail, then loop the weak spot.',
+  },
 ]
 
-function FurEliseScale() {
-  const [activeNote, setActiveNote] = useState<number | null>(null)
-
-  const playNote = (midi: number, index: number) => {
-    playPianoNote(midi, 0, 0.65, 0.86)
-    setActiveNote(index)
-    window.setTimeout(() => setActiveNote((current) => current === index ? null : current), 650)
-  }
-
-  return <section className="elise-scale" aria-labelledby="elise-scale-title">
-    <div className="elise-scale-heading"><div><Eyebrow>HOW IT WORKS · NOTE MAP</Eyebrow><h2 id="elise-scale-title">Play the Für Elise opening</h2><p>Each note on the staff is mapped to its pitch. Click a note to hear it.</p></div><Music2 size={26} aria-hidden="true" /></div>
-    <div className="music-staff" role="group" aria-label="Playable opening notes from Für Elise">
-      {Array.from({ length: 5 }, (_, index) => <i className="staff-line" key={index} />)}
-      <span className="treble-clef" aria-hidden="true">𝄞</span>
-      {furEliseOpening.map((note, index) => <button
-        key={`${note.note}-${index}`}
-        className={`staff-note ${activeNote === index ? 'playing' : ''}`}
-        style={{ left: `${17 + index * 9.5}%`, bottom: `${37 + note.level * 7}%` }}
-        onClick={() => playNote(note.midi, index)}
-        aria-label={`Play ${note.note.replace('♯', ' sharp')}`}
-      >{note.sharp && <b>♯</b>}<span /><i /><small>{note.note}</small></button>)}
+function HowItWorksScreen({ onStart }: { onStart: () => void }) {
+  return <main className="page-content how-page">
+    <Eyebrow>HOW IT WORKS</Eyebrow>
+    <h1>From recording to next step.</h1>
+    <p className="lede">One take becomes a precise picture of what to keep and what to practise next.</p>
+    <div className="how-grid">
+      {howItWorks.map((step) => <section className="how-card" key={step.number}>
+        <span className="how-number">{step.number}</span>
+        <div><h2>{step.title}</h2><p>{step.body}</p></div>
+      </section>)}
     </div>
-    <p className="scale-help">Opening phrase: E5 · D♯5 · E5 · D♯5 · E5 · B4 · D5 · C5 · A4</p>
-  </section>
+    <div className="how-actions">
+      <p>No microphone or setup needed. Start with a recording you already have.</p>
+      <button className="primary" onClick={onStart}>Start a new evaluation</button>
+    </div>
+  </main>
 }
 
 function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluation: Evaluation | null; file: File | null; fileName: string; song: typeof songs.elise; onNew: () => void }) {
-  const [tab, setTab] = useState<'accuracy' | 'tempo' | 'rhythm'>('accuracy')
+  const [tab, setTab] = useState<'accuracy' | 'tempo' | 'rhythm' | 'notes'>('accuracy')
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -255,20 +247,52 @@ function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluatio
       audio.pause()
     }
   }
-  const tabs = [['accuracy', 'Note accuracy'], ['tempo', 'Tempo'], ['rhythm', 'Rhythm']] as const
-  const recommendations = [['Restore the 3 missed notes', 'Rehearse the highlighted gaps on the score slowly, hands separately. The dashed circles mark where expected notes were not played—focus on landing each one cleanly before increasing tempo.', 'Note accuracy'], ['Keep a steady tempo', 'Your average is 70 BPM against the 72 BPM reference, and the tempo graph shows you slow toward the end. Start practice at 60 BPM with a metronome, then build back toward 72 BPM once the notes feel secure.', 'Tempo'], ['Tighten note timing', 'Use the expected/played rhythm rolls in the Rhythm tab and count aloud while you play.', 'Rhythm']]
+  const tabs = [['accuracy', 'Accuracy'], ['tempo', 'Tempo'], ['rhythm', 'Rhythm'], ['notes', 'Notes']] as const
   return <main className="page-content feedback-page">
-    <div className="feedback-heading"><div><Eyebrow>EVALUATION COMPLETE</Eyebrow><h1>Here's how you played.</h1><p className="lede">{song.title} · {song.detail.split(' · ')[0]} · {fileName}</p></div><button className="secondary" onClick={onNew}>New evaluation</button></div>
-    <FurEliseScale />
-    <div className="metric-grid">{[[`${result.pitch.score}%`, 'Note accuracy', `${result.pitch.correct} of ${result.pitch.expected} reference notes matched`], [`${result.pitch.missing + result.pitch.wrong + result.pitch.insertions}`, 'Note errors', `${result.pitch.wrong} wrong · ${result.pitch.missing} missing · ${result.pitch.insertions} extra`], [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'], [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time']].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}</div>
+    <div className="feedback-heading">
+      <div>
+        <Eyebrow>EVALUATION COMPLETE</Eyebrow>
+        <h1>Here&apos;s how you played.</h1>
+        <p className="lede">{song.title} · {song.detail.split(' · ')[0]} · {fileName}</p>
+      </div>
+    </div>
+
+    <div className="metric-grid">
+      {[
+        [`${result.pitch.score}%`, 'Note accuracy', `${result.pitch.correct} of ${result.pitch.expected} reference notes matched`],
+        [`${result.pitch.missing + result.pitch.wrong + result.pitch.insertions}`, 'Note errors', `${result.pitch.wrong} wrong · ${result.pitch.missing} missing · ${result.pitch.insertions} extra`],
+        [timing.averageBpm === null ? '–' : String(Math.round(timing.averageBpm)), 'Average tempo', 'BPM · whole recording'],
+        [timing.rhythmScore === null ? '–' : `${Math.round(timing.rhythmScore * 100)}%`, 'Rhythm accuracy', 'Notes on time'],
+      ].map(([value, title, detail]) => <div className="metric" key={title}><strong>{value}</strong><span><b>{title}</b><small>{detail}</small></span></div>)}
+    </div>
+
     <section className="feedback-card">
-      <div className="card-title"><div><h2>Review your performance</h2><p>{tab === 'rhythm' ? 'Compare expected note timing with your actual performance. Time moves left to right.' : tab === 'tempo' ? 'Switch tabs to see note accuracy, tempo, and rhythm detail.' : 'Switch tabs to see note accuracy, tempo, and rhythm detail.'}</p></div><div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div>
-      {tab === 'tempo' && <TempoChart timing={timing} />}
-      {tab === 'rhythm' && <RhythmChart events={result.events} timing={timing} />}
-      {tab === 'accuracy' && <AccuracyScore />}
-      <div className="feedback-player"><small>{fileName} · Playback position is shared across all views</small><span>Switching tabs keeps your position</span><div><button className="play-button" onClick={toggleRecording} disabled={!file}>{playing ? 'Ⅱ  Pause recording' : '▷  Play recording'}</button><span className="time">{formatAudioTime(currentTime)}</span><div className="player-line"><i style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }} /></div><span className="time">{formatAudioTime(duration)}</span></div><audio ref={audioRef} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setCurrentTime(0) }} /></div>
+      <div className="card-title">
+        <div><h2>Review your performance</h2><p>{tab === 'rhythm' ? 'Expected timing versus what you played.' : tab === 'tempo' ? 'Your tempo across the whole take.' : tab === 'notes' ? 'The reference score and the notes you played.' : 'Where the notes matched the score.'}</p></div>
+        <div className="segmented">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
+      </div>
+      <div className="feedback-view">
+        {tab === 'tempo' && <TempoChart timing={timing} />}
+        {tab === 'rhythm' && <RhythmChart events={result.events} timing={timing} />}
+        {tab === 'accuracy' && <AccuracySummary pitch={result.pitch} />}
+        {tab === 'notes' && <NotesView events={result.events} pitch={result.pitch} />}
+      </div>
+      <div className="feedback-player">
+        <small>{fileName} · Playback position is shared across all views</small>
+        <span>Switching tabs keeps your position</span>
+        <div>
+          <button className="play-button" onClick={toggleRecording} disabled={!file}>{playing ? 'Ⅱ  Pause recording' : '▷  Play recording'}</button>
+          <span className="time">{formatAudioTime(currentTime)}</span>
+          <div className="player-line"><i style={{ width: duration ? `${(currentTime / duration) * 100}%` : '0%' }} /></div>
+          <span className="time">{formatAudioTime(duration)}</span>
+        </div>
+        <audio ref={audioRef} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setCurrentTime(0) }} />
+      </div>
     </section>
-    <h2 className="work-title">Your top 3 things to work on</h2>{recommendations.map(([title, detail, tag], i) => <button className="work-item" key={title} onClick={() => setTab(tag === 'Tempo' ? 'tempo' : tag === 'Rhythm' ? 'rhythm' : 'accuracy')}><span className="rank">{i + 1}</span><div><h3>{title} <em>{tag}</em></h3><p>{detail}</p></div><ChevronRight /></button>)}<button className="record-button" onClick={onNew}>♩ &nbsp; Record another take</button>
+
+    <div className="feedback-actions">
+      <button className="secondary" onClick={onNew}>New evaluation</button>
+    </div>
   </main>
 }
 
@@ -278,13 +302,142 @@ function formatAudioTime(seconds: number) {
   return `${String(Math.floor(wholeSeconds / 60)).padStart(2, '0')}:${String(wholeSeconds % 60).padStart(2, '0')}`
 }
 
-function AccuracyScore() {
-  return <><div className="feedback-legend"><span>◯ Wrong note (4)</span><span>◌ Missing note (3)</span><span>× Extra note (1)</span></div><div className="score-grid accuracy-view">{Array.from({ length: 32 }, (_, i) => <span key={i} style={{ left: `${3 + i * 3}%`, bottom: `${20 + ((i * 17) % 43)}%` }} />)}</div><div className="callout"><CircleHelp size={17} /> Missing note: E. Practise the dashed gap slowly, then add the surrounding notes.<span>1 of 3 missing</span></div></>
+function AccuracySummary({ pitch }: { pitch: Evaluation['pitch'] }) {
+  const score = Math.max(0, Math.min(100, pitch.score))
+  return <div className="accuracy-summary">
+    <div className="accuracy-meter"><i style={{ width: `${score}%` }} /></div>
+    <div className="accuracy-counts">
+      <span><b>{pitch.correct}</b>matched</span>
+      <span><b>{pitch.wrong}</b>wrong</span>
+      <span><b>{pitch.missing}</b>missing</span>
+      <span><b>{pitch.insertions}</b>extra</span>
+    </div>
+    <p className="accuracy-note">{pitch.correct} of {pitch.expected} reference notes matched.</p>
+  </div>
 }
 
-function ProgressScreen({ onBack }: { onBack: () => void }) {
-  const [playing, setPlaying] = useState<string | null>(null)
-  const [report, setReport] = useState<string | null>(null)
-  const data = [['2 Oct', '78%', '80%', '76%'], ['7 Oct', '84%', '86%', '82%'], ['13 Oct', '88%', '90%', '86%'], ['21 Oct', '92%', '94%', '90%']]
-  return <main className="page-content progress-page"><button className="back-link" onClick={onBack}><ArrowLeft size={16} /> Back to Progress Tracker</button><div className="progress-heading"><div><Eyebrow>SONG PROGRESS</Eyebrow><h1>Ode to Joy</h1><p className="lede">Main theme · 16 bars · Reference: 90 BPM</p></div><div className="latest"><small>Latest-play accuracy</small><strong>92%</strong><span>21 Oct 2026 · 18:00</span></div></div><p className="fine-print">Illustrative sample data · Overall accuracy = (note accuracy + rhythm accuracy) ÷ 2.</p><div className="section-heading"><h2>Progress over time</h2><span>All 4 logged plays · October 2026</span></div><div className="chart-grid">{[['Note accuracy', '94%', [80, 86, 90, 94]], ['Tempo', '88 BPM', [76, 82, 86, 88]], ['Rhythm accuracy', '90%', [76, 82, 86, 90]]].map(([title, value, points]) => <div className="chart-card" key={title}><h3>{title}<strong>{value}</strong></h3><div className="mini-chart">{(points as number[]).map((point, i) => <span key={i} style={{ left: `${12 + i * 27}%`, bottom: `${point - 50}%` }}>{point}</span>)}</div><small>October 2026 · Date played</small></div>)}</div><section className="logged"><div className="section-heading"><h2>Logged plays</h2><span>Oldest to newest · Same sessions as the graphs</span></div><div className="table-head"><span>Date & time</span><span>Method</span><span>Overall accuracy</span><span>Note accuracy</span><span>Rhythm accuracy</span></div>{data.map(([date, overall, note, rhythm]) => <div className="table-row" key={date}><span>{date} 2026 · 18:00</span><span>Upload</span><b>{overall}</b><span>{note}</span><span>{rhythm}</span></div>)}</section><h2 className="work-title">Past recordings</h2>{data.slice().reverse().map(([date, overall, note, rhythm]) => <div className="recording-row" key={date}><div><b>{date} 2026 · 18:00</b><small>Upload · 00:43</small></div><strong>{overall} overall accuracy<small>Notes {note} · Rhythm {rhythm}</small></strong><button className="primary" onClick={() => setReport(date)}>View detailed report</button><button className="secondary" onClick={() => setPlaying(playing === date ? null : date)}><Play size={15} /> {playing === date ? 'Pause recording' : 'Play recording'}</button>{report === date && <small className="report-note">Demo report selected</small>}</div>)}</main>
+function NotesView({ events, pitch }: { events: AlgorithmEvent[]; pitch: Evaluation['pitch'] }) {
+  return <div className="notes-view">
+    <section className="note-panel" aria-label="Score note map">
+      <div className="note-panel-title"><span>Score note map</span><small>Tap · orange = error</small></div>
+      <NoteStaff events={events} />
+    </section>
+    <section className="note-panel" aria-label="Note accuracy grid">
+      <div className="note-panel-title"><span>Note accuracy grid</span><small>{pitch.correct} of {pitch.expected} matched</small></div>
+      <NoteGrid events={events} />
+    </section>
+  </div>
+}
+
+const fallbackStaffNotes: { midi: number; status: AlgorithmEvent['status'] }[] = [
+  { midi: 76, status: 'ok' },
+  { midi: 75, status: 'ok' },
+  { midi: 76, status: 'ok' },
+  { midi: 75, status: 'ok' },
+  { midi: 76, status: 'ok' },
+  { midi: 71, status: 'ok' },
+  { midi: 74, status: 'ok' },
+  { midi: 72, status: 'ok' },
+  { midi: 69, status: 'ok' },
+]
+
+function NoteStaff({ events }: { events: AlgorithmEvent[] }) {
+  const [active, setActive] = useState<string | null>(null)
+  const eventNotes = events.slice(0, 9).map((event, index) => {
+    const midi = [...event.expected, ...event.observed].find((pitch) => pitch > 0) ?? 60
+    return {
+      key: `event-${event.event}-${index}`,
+      midi,
+      status: event.status,
+      label: midiNoteName(midi),
+    }
+  })
+  const notes = eventNotes.length
+    ? eventNotes
+    : fallbackStaffNotes.map((note, index) => ({
+        key: `fallback-${index}`,
+        midi: note.midi,
+        status: note.status,
+        label: midiNoteName(note.midi),
+      }))
+  const low = Math.min(...notes.map((note) => note.midi))
+  const high = Math.max(...notes.map((note) => note.midi))
+  const range = high - low || 1
+
+  const play = (note: typeof notes[number]) => {
+    try {
+      playPianoNote(note.midi, 0, 0.65, 0.86)
+    } catch {
+      // Audio is an enhancement; the note map still works without it.
+    }
+    setActive(note.key)
+    window.setTimeout(() => setActive((current) => current === note.key ? null : current), 650)
+  }
+
+  return <svg className="note-staff-svg" viewBox="0 0 400 100" role="group" aria-label="Reference notes on the staff">
+    {[26, 38, 50, 62, 74].map((y) => <line key={y} className="note-staff-line" x1={30} x2={391} y1={y} y2={y} />)}
+    <text className="note-clef" x={7} y={70} aria-hidden="true">𝄞</text>
+    {notes.map((note, index) => {
+      const x = notes.length === 1 ? 80 : 64 + (index / (notes.length - 1)) * 300
+      const y = 63 - ((note.midi - low) / range) * 34
+      const statusLabel = note.status === 'wrong'
+        ? 'wrong note'
+        : note.status === 'missing'
+          ? 'missing note'
+          : note.status === 'unscored'
+            ? 'unscored note'
+            : 'note'
+      return <g
+        key={note.key}
+        className={`note-mark ${note.status === 'wrong' ? 'wrong' : ''} ${note.status === 'missing' ? 'missing' : ''} ${active === note.key ? 'playing' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label={`Play ${note.label}, ${statusLabel}`}
+        onClick={() => play(note)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            play(note)
+          }
+        }}
+      >
+        <title>{note.label} · {statusLabel}</title>
+        <line className="note-stem" x1={x + 5.2} x2={x + 5.2} y1={y - 1} y2={y - 25} />
+        <ellipse className="note-head" cx={x} cy={y} rx={6.2} ry={4.4} transform={`rotate(-20 ${x} ${y})`} />
+        <text className="note-name" x={x} y={94}>{note.label}</text>
+      </g>
+    })}
+  </svg>
+}
+
+function NoteGrid({ events }: { events: AlgorithmEvent[] }) {
+  const notes = events.map((event) => {
+    const midi = [...event.expected, ...event.observed].find((pitch) => pitch > 0) ?? 60
+    return { event, midi }
+  })
+  if (!notes.length) return <p className="chart-note">No note positions were available for this take.</p>
+  const low = Math.min(...notes.map((note) => note.midi))
+  const high = Math.max(...notes.map((note) => note.midi))
+  const range = high - low || 1
+
+  return <div className="note-grid" role="img" aria-label="Note accuracy grid: one bar per note event">
+    {notes.map(({ event, midi }, index) => {
+      const ratio = (midi - low) / range
+      const left = 2 + (index / Math.max(1, notes.length - 1)) * 96
+      const height = 12 + Math.min(Math.max(event.beats, 1), 4) * 4
+      const state = event.status === 'wrong'
+        ? 'wrong'
+        : event.status === 'missing'
+          ? 'missing'
+          : event.status === 'unscored'
+            ? 'unscored'
+            : ''
+      return <span
+        key={`${event.event}-${index}`}
+        className={`note-bar ${state}`}
+        title={`${midiNoteName(midi)} · ${event.status}`}
+        style={{ left: `${left}%`, bottom: `${12 + ratio * 70}%`, height: `${height}%` }}
+      />
+    })}
+  </div>
 }

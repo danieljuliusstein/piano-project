@@ -1,11 +1,15 @@
 'use client'
 
 import { Pause, Play, Repeat, X } from 'lucide-react'
-import { DURATION, formatTime, positionAt } from '@/lib/performance'
+import { formatTime } from '@/lib/performance'
 import type { LoopRange } from '@/hooks/use-playback'
 
 type TransportProps = {
   time: number
+  duration: number
+  bar: number
+  beat: number
+  loopLabel: string
   playing: boolean
   loop: LoopRange | null
   zoomed: boolean
@@ -14,11 +18,21 @@ type TransportProps = {
   onFullTake: () => void
 }
 
-export function Transport({ time, playing, loop, zoomed, onToggle, onClearLoop, onFullTake }: TransportProps) {
-  const { bar, beat } = positionAt(time)
-
+export function Transport({
+  time,
+  duration,
+  bar,
+  beat,
+  loopLabel,
+  playing,
+  loop,
+  zoomed,
+  onToggle,
+  onClearLoop,
+  onFullTake,
+}: TransportProps) {
   return (
-    <div className="flex items-center gap-4 px-4 py-3">
+    <div className="review-transport flex items-center gap-4 px-4 py-3">
       <button
         type="button"
         onClick={onToggle}
@@ -35,7 +49,7 @@ export function Transport({ time, playing, loop, zoomed, onToggle, onClearLoop, 
       <div className="min-w-0 flex-1">
         <p className="font-mono text-[20px] leading-none tracking-tight tabular-nums">
           {formatTime(time, true)}
-          <span className="text-foreground/30"> / {formatTime(DURATION)}</span>
+          <span className="text-foreground/30"> / {formatTime(duration)}</span>
         </p>
         <p className="mt-1.5 font-mono text-[10px] tracking-[0.14em] text-foreground/40 uppercase tabular-nums" aria-live="off">
           Bar {bar} · Beat {beat}
@@ -49,7 +63,7 @@ export function Transport({ time, playing, loop, zoomed, onToggle, onClearLoop, 
           className="flex h-9 items-center gap-1.5 border-b border-foreground/40 text-[12px] font-medium transition-colors hover:border-foreground focus-visible:border-foreground focus-visible:outline-none"
         >
           <Repeat className="size-3.5" aria-hidden />
-          Looping 5–6
+          Looping {loopLabel}
           <X className="size-3 text-foreground/50" aria-hidden />
           <span className="sr-only">, stop looping</span>
         </button>

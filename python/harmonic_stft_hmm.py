@@ -592,7 +592,8 @@ def analyse(path: str, model_name: str, config: Config | None = None):
     config = config or Config()
     score = get_score_model(model_name)
     waveform = load_audio(path, config.sample_rate)
-    waveform, _ = librosa.effects.trim(waveform, top_db=55.0)
+    waveform, trim_index = librosa.effects.trim(waveform, top_db=55.0)
+    trim_offset = trim_index[0] / config.sample_rate
 
     events = build_events(score)
     span = range(min(min(e.pitches) for e in events) - config.neighbourhood_semitones,
@@ -604,8 +605,11 @@ def analyse(path: str, model_name: str, config: Config | None = None):
     inside = crop(evidence, first, last)
     spans = viterbi(events, inside, config)
     verdicts = grade(events, spans, inside, config)
-    # Report times in the original recording's clock.
-    offset = first * config.seconds_per_frame()
+    # Report times in the original recording's clock: the trim removes lead-in
+    # before analysis, and the performance extent removes more before the first
+    # event. Both have to be added back so the review timeline lines up with
+    # playback of the uploaded file.
+    offset = trim_offset + first * config.seconds_per_frame()
     for v in verdicts:
         v.start_seconds += offset
         v.end_seconds += offset

@@ -70,7 +70,7 @@ export function IssueAnnotation({
           className="flex h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap border-l border-foreground/10 px-3 text-[13px] font-medium transition-colors hover:bg-foreground/5 focus-visible:bg-foreground/5 focus-visible:outline-none"
         >
           <Repeat className="size-3.5" aria-hidden />
-          Loop 5–6
+          Loop passage
         </button>
       </div>
     </div>

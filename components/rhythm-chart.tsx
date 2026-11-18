@@ -2,7 +2,7 @@ import type { AlgorithmEvent, TimingSummary } from '@/lib/timing'
 
 // Rows keep the .expected-row / .played-row look from globals.css, but blocks are
 // placed by time instead of filling a fixed 16-column grid.
-const rowStyle = { display: 'block', position: 'relative', height: 72 } as const
+const rowStyle = { display: 'block', position: 'relative', height: 'var(--rhythm-row, 72px)' } as const
 const labelRowStyle = { display: 'block', position: 'relative', height: 16, marginLeft: 95, marginRight: 12 } as const
 
 export function RhythmChart({ events, timing }: { events: AlgorithmEvent[]; timing: TimingSummary }) {

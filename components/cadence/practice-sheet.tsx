@@ -4,7 +4,7 @@ import { Minus, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { usePracticeLoop, type HandFilter } from '@/hooks/use-practice-loop'
-import { LOOP_BEATS, PRACTICE_NOTES, TAKE } from '@/lib/performance'
+import type { Hand, PracticeSection } from '@/lib/performance'
 import { cn } from '@/lib/utils'
 
 const HANDS: { id: HandFilter; label: string }[] = [
@@ -16,37 +16,58 @@ const HANDS: { id: HandFilter; label: string }[] = [
 const MIN_BPM = 40
 const MAX_BPM = 132
 
-const laneY = (midi: number, hand: 'rh' | 'lh') =>
-  hand === 'rh' ? 470 - ((midi - 55) / 12) * 360 : 930 - ((midi - 43) / 12) * 260
+const laneFor = (practice: PracticeSection, hand: Hand) => {
+  const values = practice.notes.filter((note) => note.hand === hand).map((note) => note.midi)
+  const fallback = hand === 'rh' ? [60, 72] : [48, 60]
+  const low = values.length ? Math.min(...values) - 1 : fallback[0]
+  const high = values.length ? Math.max(...values) + 1 : fallback[1]
+  return hand === 'rh'
+    ? { top: 150, bottom: 520, low, high: high === low ? low + 1 : high }
+    : { top: 690, bottom: 870, low, high: high === low ? low + 1 : high }
+}
 
-export function PracticeSheet({ onClose }: { onClose: () => void }) {
-  const [bpm, setBpm] = useState(72)
+export function PracticeSheet({ practice, onClose }: { practice: PracticeSection; onClose: () => void }) {
+  const [bpm, setBpm] = useState(() => Math.min(MAX_BPM, Math.max(MIN_BPM, practice.bpm)))
   const [hands, setHands] = useState<HandFilter>('both')
   const [metronome, setMetronome] = useState(true)
   const closeRef = useRef<HTMLButtonElement>(null)
-  const { running, beatPosition, pass, start, stop } = usePracticeLoop({ bpm, hands, metronome })
+  const loopBeats = Math.max(1, practice.loopBeats)
+  const { running, beatPosition, pass, start, stop } = usePracticeLoop({
+    bpm,
+    hands,
+    metronome,
+    notes: practice.notes,
+    loopBeats,
+  })
+
+  const rhLane = laneFor(practice, 'rh')
+  const lhLane = laneFor(practice, 'lh')
+  const laneY = (midi: number, hand: Hand) => {
+    const lane = hand === 'rh' ? rhLane : lhLane
+    return lane.bottom - ((midi - lane.low) / (lane.high - lane.low)) * (lane.bottom - lane.top)
+  }
 
   useEffect(() => {
     closeRef.current?.focus()
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   const counting = running && beatPosition < 0
-  const loopPos = beatPosition < 0 ? 0 : beatPosition % LOOP_BEATS
+  const loopPos = beatPosition < 0 ? 0 : beatPosition % loopBeats
   const currentBeat = running && !counting ? Math.floor(loopPos) : -1
   const countIn = counting ? Math.ceil(-beatPosition) : null
-  const adjust = (delta: number) => setBpm((b) => Math.min(MAX_BPM, Math.max(MIN_BPM, b + delta)))
+  const adjust = (delta: number) => setBpm((value) => Math.min(MAX_BPM, Math.max(MIN_BPM, value + delta)))
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="practice-title"
-      className="animate-in fade-in-0 slide-in-from-bottom-6 fixed inset-x-0 top-0 z-50 mx-auto flex h-dvh max-w-[390px] flex-col bg-background duration-300"
+      className="practice-sheet animate-in fade-in-0 slide-in-from-bottom-6 fixed inset-x-0 top-0 z-50 mx-auto flex h-dvh max-w-[390px] flex-col bg-background text-foreground duration-300"
     >
-      <div className="flex h-13 items-center justify-between px-4 pt-3">
+      <div className="practice-topbar flex h-13 items-center justify-between px-4 pt-3">
         <span className="font-mono text-[10px] tracking-[0.14em] text-foreground/40 uppercase">
           Focused practice
         </span>
@@ -61,61 +82,69 @@ export function PracticeSheet({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="px-4">
-        <h2 id="practice-title" className="text-[34px] leading-none font-semibold tracking-[-0.03em]">
-          Bars 5–6
+      <div className="practice-heading px-4">
+        <h2 id="practice-title" className="practice-title text-[34px] leading-none font-semibold tracking-[-0.03em]">
+          {practice.title}
         </h2>
-        <p className="mt-2.5 text-[14px] leading-snug text-foreground/60 text-pretty">
-          Place the E4 squarely on beat one. Let the left hand hold the pulse.
+        <p className="practice-description mt-2.5 text-[14px] leading-snug text-foreground/60 text-pretty">
+          {practice.description}
         </p>
       </div>
 
-      <div className="relative mx-4 mt-6 min-h-0 flex-1">
+      <div className="practice-notation relative mx-4 mt-6 min-h-0 flex-1">
         <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-          {Array.from({ length: LOOP_BEATS + 1 }, (_, i) => (
+          {Array.from({ length: loopBeats + 1 }, (_, index) => (
             <line
-              key={i}
-              x1={(i / LOOP_BEATS) * 1000}
-              x2={(i / LOOP_BEATS) * 1000}
+              key={index}
+              x1={(index / loopBeats) * 1000}
+              x2={(index / loopBeats) * 1000}
               y1={0}
               y2={1000}
               vectorEffect="non-scaling-stroke"
-              className={i % 4 === 0 ? 'stroke-foreground/20' : 'stroke-foreground/[0.06]'}
+              className={index % 4 === 0 ? 'stroke-foreground/20' : 'stroke-foreground/[0.06]'}
             />
           ))}
           <line x1={0} x2={1000} y1={580} y2={580} vectorEffect="non-scaling-stroke" className="stroke-foreground/[0.07]" />
-          {PRACTICE_NOTES.map((n) => {
-            const x = (n.loopBeat / LOOP_BEATS) * 1000 + 6
-            const y = laneY(n.midi, n.hand)
-            const half = 30 + n.velocity * 40
-            const muted = hands !== 'both' && n.hand !== hands
-            const played = running && !counting && n.loopBeat <= loopPos
-            const sounding = played && loopPos < n.loopBeat + n.beats * 0.9
-            const target = n.flagged && n.hand === 'rh'
+          {practice.notes.map((note) => {
+            const x = (note.loopBeat / loopBeats) * 1000 + 6
+            const y = laneY(note.midi, note.hand)
+            const half = 30 + note.velocity * 40
+            const muted = hands !== 'both' && note.hand !== hands
+            const played = running && !counting && note.loopBeat <= loopPos
+            const sounding = played && loopPos < note.loopBeat + note.beats * 0.9
             return (
               <line
-                key={n.id}
+                key={note.id}
                 x1={x}
                 x2={x}
                 y1={y - half}
                 y2={y + half}
                 vectorEffect="non-scaling-stroke"
                 strokeWidth={sounding ? 3.5 : 2}
-                className={target ? 'stroke-signal' : 'stroke-foreground'}
-                strokeOpacity={muted ? 0.1 : sounding ? 1 : played ? 0.8 : target ? 0.9 : 0.4}
+                className={note.flagged ? 'stroke-signal' : 'stroke-foreground'}
+                strokeOpacity={muted ? 0.1 : sounding ? 1 : played ? 0.8 : note.flagged ? 0.9 : 0.4}
               />
             )
           })}
         </svg>
-        <span className="pointer-events-none absolute top-0 left-1.5 font-mono text-[10px] text-foreground/50">5</span>
-        <span className="pointer-events-none absolute top-0 left-[calc(50%+6px)] font-mono text-[10px] text-foreground/50">
-          6
+        {!practice.notes.length && (
+          <div className="absolute inset-0 grid place-items-center">
+            <p className="max-w-[220px] text-center text-[13px] text-foreground/45">
+              No notes landed in this passage. Pick another moment from the timeline.
+            </p>
+          </div>
+        )}
+        <span className="pointer-events-none absolute top-0 left-1.5 font-mono text-[10px] text-foreground/50">
+          {practice.startLabel}
+        </span>
+        <span className="pointer-events-none absolute top-0 right-1.5 font-mono text-[10px] text-foreground/50">
+          {practice.endLabel}
         </span>
         {running && !counting && (
           <div
             aria-hidden
             className="pointer-events-none absolute inset-y-0 w-px bg-foreground"
-            style={{ left: `${(loopPos / LOOP_BEATS) * 100}%` }}
+            style={{ left: `${(loopPos / loopBeats) * 100}%` }}
           />
         )}
         {countIn !== null && (
@@ -127,29 +156,39 @@ export function PracticeSheet({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      <div className="mx-4 mt-3 grid grid-cols-8 gap-1" aria-hidden>
-        {Array.from({ length: LOOP_BEATS }, (_, i) => (
+      <div
+        className="practice-beats mx-4 mt-3 grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${loopBeats}, minmax(0, 1fr))` }}
+        aria-hidden
+      >
+        {Array.from({ length: loopBeats }, (_, index) => (
           <span
-            key={i}
+            key={index}
             className={cn(
               'h-0.5 transition-colors duration-75',
-              i === currentBeat ? (i % 4 === 0 ? 'bg-signal' : 'bg-foreground') : 'bg-foreground/15',
+              index === currentBeat
+                ? index % 4 === 0
+                  ? 'bg-signal'
+                  : 'bg-foreground'
+                : 'bg-foreground/15',
             )}
           />
         ))}
       </div>
-      <p className="mx-4 mt-2 font-mono text-[10px] tracking-[0.14em] text-foreground/40 uppercase tabular-nums" aria-live="polite">
+      <p className="practice-status mx-4 mt-2 font-mono text-[10px] tracking-[0.14em] text-foreground/40 uppercase tabular-nums" aria-live="polite">
         {running ? (counting ? 'Count-in' : `Pass ${pass}`) : 'Ready · 1 bar count-in'}
       </p>
 
-      <div className="mt-5 flex items-end justify-between px-4">
+      <div className="practice-tempo mt-5 flex items-end justify-between px-4">
         <div>
           <p className="font-mono text-[10px] tracking-[0.14em] text-foreground/40 uppercase">Tempo</p>
           <p className="mt-1 flex items-baseline gap-2">
-            <span className="text-[56px] leading-none font-semibold tracking-[-0.04em] tabular-nums">{bpm}</span>
+            <span className="practice-bpm text-[56px] leading-none font-semibold tracking-[-0.04em] tabular-nums">{bpm}</span>
             <span className="font-mono text-[11px] text-foreground/50">BPM</span>
           </p>
-          <p className="mt-1.5 font-mono text-[10px] text-foreground/40 tabular-nums">Your take ~{TAKE.bpm}</p>
+          <p className="mt-1.5 font-mono text-[10px] text-foreground/40 tabular-nums">
+            Your take ~{practice.averageBpm ?? bpm} BPM
+          </p>
         </div>
         <div className="flex items-center gap-1 pb-6">
           <button
@@ -173,21 +212,23 @@ export function PracticeSheet({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-foreground/10 px-4 pt-1">
+      <div className="practice-options mt-4 flex items-center justify-between border-t border-foreground/10 px-4 pt-1">
         <div role="radiogroup" aria-label="Hands" className="flex gap-5">
-          {HANDS.map((h) => (
+          {HANDS.map((hand) => (
             <button
-              key={h.id}
+              key={hand.id}
               type="button"
               role="radio"
-              aria-checked={hands === h.id}
-              onClick={() => setHands(h.id)}
+              aria-checked={hands === hand.id}
+              onClick={() => setHands(hand.id)}
               className={cn(
                 'h-11 border-t text-[13px] transition-colors focus-visible:outline-none focus-visible:text-foreground',
-                hands === h.id ? 'border-foreground text-foreground' : 'border-transparent text-foreground/45 hover:text-foreground/80',
+                hands === hand.id
+                  ? 'border-foreground text-foreground'
+                  : 'border-transparent text-foreground/45 hover:text-foreground/80',
               )}
             >
-              {h.label}
+              {hand.label}
             </button>
           ))}
         </div>
@@ -195,7 +236,7 @@ export function PracticeSheet({ onClose }: { onClose: () => void }) {
           type="button"
           role="switch"
           aria-checked={metronome}
-          onClick={() => setMetronome((m) => !m)}
+          onClick={() => setMetronome((value) => !value)}
           className={cn(
             'h-11 text-[13px] transition-colors focus-visible:outline-none focus-visible:underline',
             metronome ? 'text-foreground' : 'text-foreground/45',
@@ -205,14 +246,15 @@ export function PracticeSheet({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <div className="practice-action px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <Button
           onClick={running ? stop : start}
           variant={running ? 'outline' : 'default'}
           className={cn(
-            'h-12 w-full rounded-full text-[15px] font-medium',
+            'practice-start h-12 w-full rounded-full text-[15px] font-medium',
             running && 'border-foreground/30 bg-transparent dark:bg-transparent',
           )}
+          disabled={!practice.notes.length}
         >
           {running ? 'Stop loop' : 'Start loop'}
         </Button>

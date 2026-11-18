@@ -2,17 +2,12 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import {
-  DURATION,
-  FOCUS_RANGE,
-  ISSUES,
-  NOTES,
-  SECONDS_PER_BAR,
-  SECONDS_PER_BEAT,
-  TAKE,
   formatTime,
   positionAt,
+  type Hand,
   type Issue,
   type IssueId,
+  type ReviewData,
 } from '@/lib/performance'
 import type { LoopRange } from '@/hooks/use-playback'
 import { cn } from '@/lib/utils'
@@ -21,22 +16,35 @@ import { IssueAnnotation } from './issue-annotation'
 const CARD_WIDTH = 256
 const EDGE = 8
 
-const RH = { top: 150, bottom: 520, low: 55, high: 67 }
-const LH = { top: 690, bottom: 870, low: 43, high: 55 }
-const RH_MARKER_Y = 8.5
-const LH_BRACKET_Y = 94.5
+const RH = { top: 150, bottom: 520 }
+const LH = { top: 690, bottom: 870 }
 
-const pitchY = (midi: number, hand: 'rh' | 'lh') => {
-  const lane = hand === 'rh' ? RH : LH
-  const k = (midi - lane.low) / (lane.high - lane.low)
-  return lane.bottom - k * (lane.bottom - lane.top)
+type Lane = { top: number; bottom: number; low: number; high: number }
+
+const laneFor = (data: ReviewData, hand: Hand): Lane => {
+  const values = data.notes.filter((note) => note.hand === hand).map((note) => note.midi)
+  const fallback = hand === 'rh' ? { top: RH.top, bottom: RH.bottom, low: 60, high: 72 } : { top: LH.top, bottom: LH.bottom, low: 48, high: 60 }
+  if (!values.length) return fallback
+  const low = Math.min(...values) - 1
+  const high = Math.max(...values) + 1
+  return {
+    top: hand === 'rh' ? RH.top : LH.top,
+    bottom: hand === 'rh' ? RH.bottom : LH.bottom,
+    low,
+    high: high === low ? low + 1 : high,
+  }
 }
+
+const noteMarkerTop = (hand: Hand) => (hand === 'rh' ? 8.5 : 62.5)
+const passageMarkerTop = (hand: Hand) => (hand === 'rh' ? 8.5 : 94.5)
 
 type PerformanceTimelineProps = {
   time: number
+  duration: number
   view: [number, number]
   loop: LoopRange | null
   selected: IssueId | null
+  data: ReviewData
   onSelect: (id: IssueId | null) => void
   onScrubStart: () => void
   onScrub: (t: number) => void
@@ -47,9 +55,11 @@ type PerformanceTimelineProps = {
 
 export function PerformanceTimeline({
   time,
+  duration,
   view,
   loop,
   selected,
+  data,
   onSelect,
   onScrubStart,
   onScrub,
@@ -62,18 +72,28 @@ export function PerformanceTimeline({
   const scrubbing = useRef(false)
 
   useEffect(() => {
-    const el = plotRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
-    ro.observe(el)
-    return () => ro.disconnect()
+    const element = plotRef.current
+    if (!element) return
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [])
 
   const [viewStart, viewEnd] = view
-  const span = viewEnd - viewStart
-  const zoomed = span < DURATION * 0.6
+  const span = Math.max(viewEnd - viewStart, 0.01)
+  const safeDuration = Math.max(duration, 0.1)
+  const zoomed = span < safeDuration * 0.6
   const pct = (t: number) => ((t - viewStart) / span) * 100
   const sx = (t: number) => pct(t) * 10
+  const { bar, beat } = positionAt(time, data.secondsPerBeat, data.beatsPerBar)
+  const rhLane = laneFor(data, 'rh')
+  const lhLane = laneFor(data, 'lh')
+
+  const pitchY = (midi: number, hand: Hand) => {
+    const lane = hand === 'rh' ? rhLane : lhLane
+    const k = (midi - lane.low) / (lane.high - lane.low)
+    return lane.bottom - k * (lane.bottom - lane.top)
+  }
 
   const timeFromPointer = (clientX: number) => {
     const rect = plotRef.current!.getBoundingClientRect()
@@ -81,56 +101,48 @@ export function PerformanceTimeline({
     return viewStart + k * span
   }
 
-  const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return
-    e.currentTarget.setPointerCapture(e.pointerId)
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
     scrubbing.current = true
     onSelect(null)
     onScrubStart()
-    onScrub(timeFromPointer(e.clientX))
+    onScrub(timeFromPointer(event.clientX))
   }
 
-  const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!scrubbing.current) return
-    onScrub(timeFromPointer(e.clientX))
+    onScrub(timeFromPointer(event.clientX))
   }
 
-  const handlePointerUp = (e: PointerEvent<HTMLDivElement>) => {
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!scrubbing.current) return
     scrubbing.current = false
-    onScrubEnd(timeFromPointer(e.clientX))
+    onScrubEnd(timeFromPointer(event.clientX))
   }
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const step = e.shiftKey ? 5 : 1
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 5 : 1
     const map: Record<string, number> = {
       ArrowRight: time + step,
       ArrowLeft: time - step,
       Home: 0,
-      End: DURATION,
+      End: duration,
     }
-    if (!(e.key in map)) return
-    e.preventDefault()
+    if (!(event.key in map)) return
+    event.preventDefault()
     onScrubStart()
-    onScrubEnd(map[e.key])
+    onScrubEnd(map[event.key])
   }
 
-  const bars = Array.from({ length: TAKE.bars }, (_, i) => i + 1)
-  const beats = Array.from({ length: TAKE.bars * TAKE.beatsPerBar }, (_, i) => i * SECONDS_PER_BEAT)
-  const labelStep = zoomed ? 2 : 8
-  const timeLabels = Array.from({ length: Math.floor(DURATION / labelStep) + 1 }, (_, i) => i * labelStep)
-  const { bar, beat } = positionAt(time)
-
-  const rhIssue = ISSUES.find((i) => i.id === 'rh-late')!
-  const lhIssue = ISSUES.find((i) => i.id === 'lh-uneven')!
-  const lateNote = NOTES.find((n) => n.hand === 'rh' && n.flagged)!
-  const lhSelected = selected === 'lh-uneven'
-  const activeIssue = ISSUES.find((i) => i.id === selected)
+  const labelStep = zoomed ? 2 : Math.max(4, Math.ceil(safeDuration / 6))
+  const timeLabels = Array.from(
+    { length: Math.floor(safeDuration / labelStep) + 1 },
+    (_, index) => index * labelStep,
+  )
   const inView = (t: number) => t >= viewStart - 0.5 && t <= viewEnd + 0.5
 
-  const lateHalf = 22 + lateNote.velocity * 34
-  const lateNoteTopPct = (pitchY(lateNote.midi, 'rh') - lateHalf) / 10
-
+  const activeIssue = data.issues.find((issue) => issue.id === selected)
   const anchorPx = activeIssue ? (pct(activeIssue.anchor) / 100) * width : 0
   const annotationLayout = (() => {
     if (!activeIssue) return null
@@ -138,7 +150,7 @@ export function PerformanceTimeline({
       const fitsRight = anchorPx + 16 + CARD_WIDTH <= width - EDGE
       const left = fitsRight ? anchorPx + 16 : Math.max(EDGE, anchorPx - 16 - CARD_WIDTH)
       return {
-        style: { left, top: `calc(${RH_MARKER_Y}% - 14px)` },
+        style: { left, top: 'calc(8.5% - 14px)' },
         caret: 'left' as const,
         caretOffset: 4,
         connector: { from: Math.min(anchorPx, left + CARD_WIDTH), to: Math.max(anchorPx, left) },
@@ -146,7 +158,7 @@ export function PerformanceTimeline({
     }
     const left = Math.min(Math.max(anchorPx - CARD_WIDTH / 2, EDGE), width - CARD_WIDTH - EDGE)
     return {
-      style: { left, bottom: `${100 - LH.top / 10 + 4}%` },
+      style: { left, bottom: '35%' },
       caret: 'bottom' as const,
       caretOffset: Math.min(Math.max(anchorPx - left - 12, 8), CARD_WIDTH - 32),
       connector: null,
@@ -156,21 +168,22 @@ export function PerformanceTimeline({
   return (
     <section aria-label="Performance timeline" className="flex min-h-0 flex-1 flex-col">
       <div className="relative h-6 overflow-hidden" aria-hidden>
-        {bars.map((b) => {
-          const x = pct((b - 1) * SECONDS_PER_BAR)
+        {data.barLines.map(({ bar: barNumber, seconds }) => {
+          const x = pct(seconds)
           if (x < -5 || x > 100) return null
-          const phrase = (b - 1) % 4 === 0
+          const phrase = (barNumber - 1) % 4 === 0
+          const focused = seconds >= data.focusRange[0] - 0.2 && seconds <= data.focusRange[1] + 0.2
           return (
             <span
-              key={b}
+              key={barNumber}
               className={cn(
                 'absolute top-1 font-mono text-[10px] tabular-nums',
                 phrase ? 'text-foreground/60' : 'text-foreground/25',
-                (b === 5 || b === 6) && (selected || loop) && 'text-foreground',
+                focused && (selected || loop) && 'text-foreground',
               )}
               style={{ left: `calc(${x}% + 3px)` }}
             >
-              {b}
+              {barNumber}
             </span>
           )
         })}
@@ -182,7 +195,7 @@ export function PerformanceTimeline({
           tabIndex={0}
           aria-label="Scrub through recording"
           aria-valuemin={0}
-          aria-valuemax={DURATION}
+          aria-valuemax={safeDuration}
           aria-valuenow={Math.round(time * 10) / 10}
           aria-valuetext={`${formatTime(time)}, bar ${bar} beat ${beat}`}
           onPointerDown={handlePointerDown}
@@ -208,31 +221,14 @@ export function PerformanceTimeline({
               />
             )}
 
-            {zoomed &&
-              beats.map((t) =>
-                inView(t) ? (
-                  <line
-                    key={`beat-${t}`}
-                    x1={sx(t)}
-                    x2={sx(t)}
-                    y1={0}
-                    y2={1000}
-                    vectorEffect="non-scaling-stroke"
-                    className="stroke-foreground/[0.05]"
-                    strokeDasharray="1 5"
-                  />
-                ) : null,
-              )}
-
-            {bars.map((b) => {
-              const t = (b - 1) * SECONDS_PER_BAR
-              if (!inView(t)) return null
-              const phrase = (b - 1) % 4 === 0
+            {data.barLines.map(({ bar: barNumber, seconds }) => {
+              if (!inView(seconds)) return null
+              const phrase = (barNumber - 1) % 4 === 0
               return (
                 <line
-                  key={`bar-${b}`}
-                  x1={sx(t)}
-                  x2={sx(t)}
+                  key={`bar-${barNumber}`}
+                  x1={sx(seconds)}
+                  x2={sx(seconds)}
                   y1={0}
                   y2={1000}
                   vectorEffect="non-scaling-stroke"
@@ -250,16 +246,14 @@ export function PerformanceTimeline({
               className="stroke-foreground/[0.07]"
             />
 
-            {NOTES.map((note) => {
+            {data.notes.map((note) => {
               if (!inView(note.start)) return null
               const x = sx(note.start)
               const y = pitchY(note.midi, note.hand)
               const half = 22 + note.velocity * 34
               const played = note.start <= time
               const sounding = played && time < note.start + note.duration
-              const isLate = note.hand === 'rh' && note.flagged
-              const lhFlag = note.hand === 'lh' && note.flagged && lhSelected
-              const signal = isLate || lhFlag
+              const signal = note.flagged
               return (
                 <g key={note.id}>
                   {signal && zoomed && (
@@ -291,6 +285,7 @@ export function PerformanceTimeline({
                     vectorEffect="non-scaling-stroke"
                     strokeLinecap="square"
                     strokeWidth={sounding ? 3 : signal ? 2 : 1.5}
+                    strokeDasharray={note.status === 'missing' ? '3 3' : undefined}
                     className={cn(
                       'transition-[stroke-opacity] duration-300',
                       signal ? 'stroke-signal' : 'stroke-foreground',
@@ -318,91 +313,119 @@ export function PerformanceTimeline({
           </div>
         </div>
 
-          {inView(rhIssue.anchor) && (
-            <>
-              <span
-                aria-hidden
-                className="pointer-events-none absolute w-px bg-signal/60"
+        {data.issues.map((issue) => {
+          if (!inView(issue.anchor)) return null
+          const expanded = selected === issue.id
+
+          if (issue.kind === 'passage') {
+            const left = pct(issue.range[0])
+            const right = pct(issue.range[1])
+            const top = passageMarkerTop(issue.hand)
+            return (
+              <button
+                key={issue.id}
+                type="button"
+                aria-label={`${issue.bars}, ${issue.title.toLowerCase()}`}
+                aria-expanded={expanded}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => onSelect(expanded ? null : issue.id)}
+                className="group absolute z-20 h-8 -translate-y-1/2 focus-visible:outline-none"
                 style={{
-                  left: `${pct(rhIssue.anchor)}%`,
-                  top: `${RH_MARKER_Y}%`,
-                  height: `${Math.max(lateNoteTopPct - RH_MARKER_Y, 0)}%`,
+                  left: `${left}%`,
+                  width: `${Math.max(right - left, 1)}%`,
+                  top: `${top}%`,
                 }}
-              />
+              >
+                <span
+                  className={cn(
+                    'absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 border-x border-signal transition-all group-focus-visible:ring-2 group-focus-visible:ring-signal/50',
+                    expanded ? 'border-x-2' : '',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'absolute inset-x-0 top-1/2 -translate-y-1/2 bg-signal transition-all',
+                      expanded ? 'h-0.5' : 'h-px group-hover:h-0.5',
+                    )}
+                  />
+                </span>
+              </button>
+            )
+          }
+
+          const top = noteMarkerTop(issue.hand)
+          const issueNote =
+            issue.midi === undefined
+              ? undefined
+              : data.notes.find(
+                  (note) =>
+                    note.midi === issue.midi && Math.abs(note.start - issue.anchor) < 0.3,
+                )
+          const noteTop = issueNote
+            ? (pitchY(issueNote.midi, issueNote.hand) - (22 + issueNote.velocity * 34)) / 10
+            : top
+
+          return (
+            <div key={issue.id}>
+              {issueNote && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute w-px bg-signal/60"
+                  style={{
+                    left: `${pct(issue.anchor)}%`,
+                    top: `${top}%`,
+                    height: `${Math.max(noteTop - top, 0)}%`,
+                  }}
+                />
+              )}
               <button
                 type="button"
-                aria-label="Bar 5, right hand E4 landed 180 milliseconds late"
-                aria-expanded={selected === 'rh-late'}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => onSelect(selected === 'rh-late' ? null : 'rh-late')}
+                aria-label={`${issue.eyebrow}, ${issue.title.toLowerCase()}`}
+                aria-expanded={expanded}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => onSelect(expanded ? null : issue.id)}
                 className="group absolute z-20 grid size-9 -translate-x-1/2 -translate-y-1/2 place-items-center focus-visible:outline-none"
-                style={{ left: `${pct(rhIssue.anchor)}%`, top: `${RH_MARKER_Y}%` }}
+                style={{ left: `${pct(issue.anchor)}%`, top: `${top}%` }}
               >
                 <span
                   className={cn(
                     'size-2.5 rotate-45 border border-signal transition-all group-hover:scale-125 group-focus-visible:ring-2 group-focus-visible:ring-signal/50 group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-background',
-                    selected === 'rh-late' ? 'scale-125 bg-signal' : 'bg-background',
+                    expanded ? 'scale-125 bg-signal' : 'bg-background',
                   )}
                 />
               </button>
-            </>
-          )}
+            </div>
+          )
+        })}
 
-          {inView(FOCUS_RANGE[0]) && (
-            <button
-              type="button"
-              aria-label="Bars 5 to 6, uneven left-hand timing"
-              aria-expanded={lhSelected}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => onSelect(lhSelected ? null : 'lh-uneven')}
-              className="group absolute z-20 h-8 -translate-y-1/2 focus-visible:outline-none"
-              style={{
-                left: `${pct(FOCUS_RANGE[0])}%`,
-                width: `${pct(FOCUS_RANGE[1]) - pct(FOCUS_RANGE[0])}%`,
-                top: `${LH_BRACKET_Y}%`,
-              }}
-            >
+        {activeIssue && annotationLayout && (
+          <>
+            {annotationLayout.connector && (
               <span
-                className={cn(
-                  'absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 border-x border-signal transition-all group-focus-visible:ring-2 group-focus-visible:ring-signal/50',
-                  lhSelected ? 'border-x-2' : '',
-                )}
-              >
-                <span
-                  className={cn(
-                    'absolute inset-x-0 top-1/2 -translate-y-1/2 bg-signal transition-all',
-                    lhSelected ? 'h-0.5' : 'h-px group-hover:h-0.5',
-                  )}
-                />
-              </span>
-            </button>
-          )}
-
-          {activeIssue && annotationLayout && (
-            <>
-              {annotationLayout.connector && (
-                <span
-                  aria-hidden
-                  className="pointer-events-none absolute z-20 h-px bg-signal/60"
-                  style={{
-                    top: `${RH_MARKER_Y}%`,
-                    left: annotationLayout.connector.from + 6,
-                    width: Math.max(annotationLayout.connector.to - annotationLayout.connector.from - 6, 0),
-                  }}
-                />
-              )}
-              <IssueAnnotation
-                key={activeIssue.id}
-                issue={activeIssue}
-                style={annotationLayout.style}
-                caret={annotationLayout.caret}
-                caretOffset={annotationLayout.caretOffset}
-                onPlayMoment={() => onPlayMoment(activeIssue)}
-                onLoop={onLoop}
-                onClose={() => onSelect(null)}
+                aria-hidden
+                className="pointer-events-none absolute z-20 h-px bg-signal/60"
+                style={{
+                  top: '8.5%',
+                  left: annotationLayout.connector.from + 6,
+                  width: Math.max(
+                    annotationLayout.connector.to - annotationLayout.connector.from - 6,
+                    0,
+                  ),
+                }}
               />
-            </>
-          )}
+            )}
+            <IssueAnnotation
+              key={activeIssue.id}
+              issue={activeIssue}
+              style={annotationLayout.style}
+              caret={annotationLayout.caret}
+              caretOffset={annotationLayout.caretOffset}
+              onPlayMoment={() => onPlayMoment(activeIssue)}
+              onLoop={onLoop}
+              onClose={() => onSelect(null)}
+            />
+          </>
+        )}
       </div>
 
       <div className="relative h-6 overflow-hidden" aria-hidden>
