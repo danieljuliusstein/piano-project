@@ -1,6 +1,6 @@
 import type { AlgorithmEvent } from '@/lib/timing'
 
-export type SongId = 'elise' | 'joy'
+export type SongId = string
 
 export type PitchSummary = {
   score: number

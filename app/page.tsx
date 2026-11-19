@@ -15,68 +15,50 @@ import { UploadScreen } from '@/components/cadence/upload-screen'
 import { ProgressScreen } from '@/components/progress-screen'
 import { midiNoteName } from '@/lib/performance'
 import { playPianoNote } from '@/lib/piano-audio'
+import { evaluateRecording, type Evaluation } from '@/lib/evaluation-client'
+import { defaultScoreCatalog, scoreCatalogFromBackend, type BackendScore, type Score } from '@/lib/score-catalog'
 
 const sample = sampleJson as AnalysisResult
-type Evaluation = AnalysisResult & {
-  reference_bpm: number
-  savedAt?: string
-  pitch: {
-    score: number
-    precision: number
-    recall: number
-    f1: number
-    correct: number
-    expected: number
-    missing: number
-    wrong: number
-    insertions: number
-  }
-}
-
 type Screen = 'new' | 'upload' | 'feedback' | 'progress' | 'how'
-type Song = 'elise' | 'joy'
-
-// beatSymbol is the note the analyzer counts as one beat, so every tempo is shown
-// as that note per minute (♪ = 136 means 136 eighth notes a minute). beatsPerBar
-// and pickupBeats turn score beats into bar numbers; Für Elise opens with a
-// one-beat pickup before bar 1.
-const songs = {
-  elise: {
-    title: 'Für Elise',
-    artist: 'Ludwig van Beethoven',
-    level: 'Intermediate',
-    detail: 'Opening section · 7 bars · ♪ = 136',
-    meter: '3/8',
-    beatSymbol: '♪',
-    beatsPerBar: 3,
-    pickupBeats: 1,
-  },
-  joy: {
-    title: 'Ode to Joy',
-    artist: 'Ludwig van Beethoven',
-    level: 'Beginner',
-    detail: 'Main theme · 8 bars · ♩ = 136',
-    meter: '4/4',
-    beatSymbol: '♩',
-    beatsPerBar: 4,
-    pickupBeats: 0,
-  },
-}
+type Song = string
 
 export default function Page() {
   const [screen, setScreen] = useState<Screen>('new')
-  const [song, setSong] = useState<Song>('elise')
+  const [song, setSong] = useState<Song>('ode_melody')
+  const [songs, setSongs] = useState<Record<string, Score>>(defaultScoreCatalog)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
   const [evaluationError, setEvaluationError] = useState<string | null>(null)
   const [evaluating, setEvaluating] = useState(false)
 
   const selectedSong = songs[song]
-  const fileName = audioFile?.name ?? 'für-elise-practice.wav'
+  const fileName = audioFile?.name ?? 'practice-recording.wav'
 
   useEffect(() => {
     window.scrollTo(0, 0)
   }, [screen])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/scores', { cache: 'no-store', signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json() as { scores?: BackendScore[]; error?: string }
+        if (!response.ok || !Array.isArray(payload.scores)) {
+          throw new Error(payload.error ?? 'Unable to load supported scores.')
+        }
+        return scoreCatalogFromBackend(payload.scores)
+      })
+      .then((catalog) => {
+        if (Object.keys(catalog).length === 0) return
+        setSongs(catalog)
+        setSong((current) => catalog[current] ? current : Object.keys(catalog)[0])
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return
+        console.error('Unable to load backend score catalog:', error)
+      })
+    return () => controller.abort()
+  }, [])
 
   const evaluate = async () => {
     if (!audioFile) {
@@ -86,15 +68,7 @@ export default function Page() {
     setEvaluating(true)
     setEvaluationError(null)
     try {
-      const body = new FormData()
-      body.append('file', audioFile)
-      body.append('model', song === 'elise' ? 'fur_elise_with_harmony' : 'ode_to_joy_with_harmony')
-      const response = await fetch('/api/evaluate', { method: 'POST', body })
-      const payload = await response.json() as Evaluation | { error?: string }
-      if (!response.ok || !('pitch' in payload)) {
-        throw new Error('error' in payload && payload.error ? payload.error : 'Evaluation failed.')
-      }
-      setEvaluation(payload)
+      setEvaluation(await evaluateRecording(audioFile, song))
       setScreen('feedback')
     } catch (error) {
       setEvaluationError(error instanceof Error ? error.message : 'Evaluation failed.')
@@ -133,7 +107,7 @@ export default function Page() {
                   <span className="song-icon"><Music2 size={22} /></span>
                   <span className="song-info"><strong>{songs[id].title}</strong><small>{songs[id].artist}</small></span>
                   <span className="radio">{song === id && <span />}</span>
-                  <span className={`tag ${id === 'elise' ? 'orange' : ''}`}>{songs[id].level}</span>
+                  <span className={`tag ${id.includes('canon') ? 'orange' : ''}`}>{songs[id].level}</span>
                   <small className="song-detail">{songs[id].detail}</small>
                 </button>
               ))}
@@ -220,7 +194,7 @@ function HowItWorksScreen({ onStart }: { onStart: () => void }) {
   </main>
 }
 
-function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluation: Evaluation | null; file: File | null; fileName: string; song: typeof songs.elise; onNew: () => void }) {
+function FeedbackScreen({ evaluation, file, fileName, song, onNew }: { evaluation: Evaluation | null; file: File | null; fileName: string; song: Score; onNew: () => void }) {
   const [tab, setTab] = useState<'accuracy' | 'tempo' | 'rhythm' | 'notes'>('accuracy')
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)

@@ -1,47 +1,92 @@
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { existsSync, promises as fs } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import { analyzeTiming, type AlgorithmEvent } from '@/lib/timing'
 import type { EvaluationRecord, PitchSummary } from '@/lib/evaluation-record'
 import { saveEvaluation } from '@/lib/evaluation-store'
 
-const execFileAsync = promisify(execFile)
 const MAX_FILE_SIZE = 25 * 1024 * 1024
 const ALLOWED_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a'])
+const DEFAULT_BACKEND_URL = 'http://127.0.0.1:8000'
 
-type AnalyzerResult = {
+type BackendResult = {
+  schema_version: string
+  algorithm_version: string
+  evaluation_id: string
   source: string
-  model: string
+  score_id: string
   reference_bpm: number
-  events: AlgorithmEvent[]
+  audio?: {
+    duration_seconds?: number
+  }
   pitch: PitchSummary
+  events: Array<{
+    event: number
+    note_id?: string
+    hand?: string
+    bar?: number
+    start_beat: number
+    beats: number
+    status: 'ok' | 'wrong' | 'missing'
+    flags?: string[]
+    expected: number[]
+    observed: number[]
+    start_seconds: number | null
+    end_seconds: number | null
+    confidence?: number
+  }>
+}
+
+type BackendResponse = {
+  status?: string
+  result?: BackendResult
+  error?: {
+    message?: string
+  }
+}
+
+function backendUrl() {
+  return (process.env.PIANO_EVAL_API_URL ?? DEFAULT_BACKEND_URL).replace(/\/+$/, '')
+}
+
+function normalizeEvents(result: BackendResult): AlgorithmEvent[] {
+  const secondsPerBeat = 60 / result.reference_bpm
+  return result.events.map((event) => {
+    const fallbackStart = event.start_beat * secondsPerBeat
+    const fallbackEnd = fallbackStart + event.beats * secondsPerBeat
+    return {
+      event: event.event,
+      start_beat: event.start_beat,
+      beats: event.beats,
+      status: event.status,
+      expected: event.expected,
+      observed: event.observed,
+      start_seconds: event.start_seconds ?? fallbackStart,
+      end_seconds: event.end_seconds ?? fallbackEnd,
+      margin_db: event.confidence ?? null,
+    }
+  })
+}
+
+function resolveScoreId(form: FormData) {
+  const scoreId = form.get('score_id')
+  if (typeof scoreId === 'string' && scoreId.length > 0) return scoreId
+
+  const model = form.get('model')
+  if (typeof model !== 'string' || model.length === 0) return null
+  return model === 'ode_to_joy_with_harmony' ? 'ode_harmony' : model
 }
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-function resolvePython() {
-  if (process.env.PYTHON_PATH) return process.env.PYTHON_PATH
-  const localEnvironment = [
-    path.join(process.cwd(), '.venv', 'bin', 'python'),
-    path.join(process.cwd(), '.venv', 'Scripts', 'python.exe'),
-  ]
-  return localEnvironment.find((candidate) => existsSync(candidate)) ?? 'python3'
-}
-
 export async function POST(request: Request) {
-  let temporaryPath: string | undefined
-
   try {
     const form = await request.formData()
     const file = form.get('file')
-    const model = form.get('model')
+    const scoreId = resolveScoreId(form)
 
-    if (!(file instanceof File) || typeof model !== 'string') {
-      return Response.json({ error: 'An audio file and score model are required.' }, { status: 400 })
+    if (!(file instanceof File) || !scoreId) {
+      return Response.json({ error: 'An audio file and score ID are required.' }, { status: 400 })
     }
 
     const extension = path.extname(file.name).toLowerCase()
@@ -52,42 +97,50 @@ export async function POST(request: Request) {
       return Response.json({ error: 'Audio files must be between 1 byte and 25 MB.' }, { status: 413 })
     }
 
-    temporaryPath = path.join(os.tmpdir(), `piano-review-${randomUUID()}${extension}`)
-    await fs.writeFile(temporaryPath, Buffer.from(await file.arrayBuffer()))
+    const upload = new FormData()
+    upload.append('file', file, file.name)
+    upload.append('score_id', scoreId)
 
-    const python = resolvePython()
-    const script = path.join(process.cwd(), 'python', 'analyze_recording.py')
-    const { stdout } = await execFileAsync(
-      python,
-      [script, '--audio', temporaryPath, '--model', model],
-      { cwd: path.join(process.cwd(), 'python'), maxBuffer: 4 * 1024 * 1024 },
-    )
-    const result = JSON.parse(stdout.trim()) as AnalyzerResult
-    result.source = file.name
+    const headers: HeadersInit = {}
+    if (process.env.PIANO_EVAL_API_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.PIANO_EVAL_API_TOKEN}`
+    }
 
-    const timing = analyzeTiming(result.events)
-    const noteAccuracy = result.pitch.score
-    const rhythmAccuracy = timing.rhythmScore === null ? null : Math.round(timing.rhythmScore * 100)
-    const averageBpm = timing.averageBpm === null ? null : Math.round(timing.averageBpm)
-    const lastEvent = result.events[result.events.length - 1]
+    const response = await fetch(`${backendUrl()}/v1/evaluations`, {
+      method: 'POST',
+      headers,
+      body: upload,
+      cache: 'no-store',
+    })
+    const payload = await response.json() as BackendResponse
+
+    if (!response.ok || !payload.result) {
+      const message = payload.error?.message ?? `Evaluation service returned HTTP ${response.status}.`
+      return Response.json({ error: message }, { status: response.status >= 400 ? response.status : 502 })
+    }
+
+    const result = payload.result
+    const events = normalizeEvents(result)
+    const timing = analyzeTiming(events)
+    const referenceBpm = Math.round(result.reference_bpm)
     const record: EvaluationRecord = {
-      id: randomUUID(),
+      id: result.evaluation_id || randomUUID(),
       createdAt: new Date().toISOString(),
-      song: result.model.startsWith('fur_elise') ? 'elise' : 'joy',
+      song: result.score_id,
       fileName: file.name,
-      model: result.model,
-      referenceBpm: Math.round(result.reference_bpm),
-      durationSeconds: lastEvent && Number.isFinite(lastEvent.end_seconds)
-        ? Math.round(lastEvent.end_seconds)
-        : null,
-      noteAccuracy,
-      rhythmAccuracy,
-      averageBpm,
-      overallAccuracy: rhythmAccuracy === null
-        ? noteAccuracy
-        : Math.round((noteAccuracy + rhythmAccuracy) / 2),
+      model: result.score_id,
+      referenceBpm: referenceBpm,
+      durationSeconds: result.audio?.duration_seconds
+        ?? events.at(-1)?.end_seconds
+        ?? null,
+      noteAccuracy: result.pitch.score,
+      rhythmAccuracy: timing.rhythmScore === null ? null : Math.round(timing.rhythmScore * 100),
+      averageBpm: timing.averageBpm === null ? null : Math.round(timing.averageBpm),
+      overallAccuracy: timing.rhythmScore === null
+        ? result.pitch.score
+        : Math.round((result.pitch.score + timing.rhythmScore * 100) / 2),
       pitch: result.pitch,
-      events: result.events,
+      events,
     }
 
     try {
@@ -96,19 +149,22 @@ export async function POST(request: Request) {
       console.error('Unable to save evaluation:', saveError)
     }
 
-    return Response.json({ ...result, savedAt: record.createdAt })
+    return Response.json({
+      source: file.name,
+      model: result.score_id,
+      reference_bpm: result.reference_bpm,
+      pitch: result.pitch,
+      events,
+      savedAt: record.createdAt,
+      evaluation_id: result.evaluation_id,
+      algorithm_version: result.algorithm_version,
+    })
   } catch (error) {
-    const details = error instanceof Error ? error.message : 'Unknown analyzer error'
-    console.error('Audio evaluation failed:', details)
+    const details = error instanceof Error ? error.message : 'Unknown evaluation service error'
+    console.error('Audio evaluation request failed:', details)
     return Response.json(
-      { error: 'Evaluation failed. Make sure the Python analyzer is installed (pnpm setup:python) and the audio is a supported file.' },
-      { status: 500 },
+      { error: 'Unable to reach the piano evaluation service.' },
+      { status: 502 },
     )
-  } finally {
-    if (temporaryPath) {
-      await fs.unlink(temporaryPath).catch((error) => {
-        console.error('Unable to remove temporary audio file:', error)
-      })
-    }
   }
 }
